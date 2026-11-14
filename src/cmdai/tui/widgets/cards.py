@@ -27,6 +27,11 @@ from ...core.capabilities import clean_model_name
 
 from .helpers import get_lexer_for_path, is_api_error_message, copy_text_to_clipboard, subprocess_run_copy
 
+class _ActionStatic(Static):
+    """Static control that never starts a Textual selection on click."""
+    allow_select = False
+
+
 class UserMessageCard(Vertical):
     """User message card with in-card label and prompt text (Swift style). Click opens copy/revert/delete."""
 
@@ -53,7 +58,7 @@ class UserMessageCard(Vertical):
             hdr = f"[bold #58a6ff]{p1.strip()}[/] [dim #6e7681]· {p2.strip()}[/]"
         else:
             hdr = f"[bold #58a6ff]{label.strip()}[/]"
-        self._header = Static(hdr, classes="card-label")
+        self._header = _ActionStatic(hdr, classes="card-label")
         self._body = Static(Text(prompt, style="white"), classes="card-body")
 
     def compose(self):
@@ -425,7 +430,7 @@ class AssistantTurnCard(Vertical):
         self.is_generating: bool = True
         self.current_status: str = "generating"
 
-        self.header_widget = Static("", classes="card-header")
+        self.header_widget = _ActionStatic("", classes="card-header")
         self.loading_container = Vertical(classes="card-loading")
         self.thinking_container = Vertical(classes="card-thinking")
         self.flow_container = Vertical(classes="card-flow")
@@ -437,7 +442,7 @@ class AssistantTurnCard(Vertical):
         else:
             self.current_body_widget = None
             self.body_widgets = []
-        self.footer_widget = Static("", classes="card-footer")
+        self.footer_widget = _ActionStatic("", classes="card-footer")
         # Textual's default Vertical sizing can claim all remaining space in a
         # scroll view.  Keep each turn content-sized so tool rows never get
         # pushed to the bottom of an otherwise empty screen.
@@ -610,15 +615,20 @@ class AssistantTurnCard(Vertical):
     def start_thinking(self, message: str = "Thinking…") -> Optional[ThinkingBlock]:
         if not self.has_thinking:
             return None
-        self.thinking_container.styles.display = "block"
         if self.loading_block and not self.loading_block.is_finished:
             self.loading_block.finish()
-        if self.thinking_block is None:
+        if self.thinking_block is None or self.thinking_block.is_finished:
             self.thinking_block = ThinkingBlock()
-            if self.is_mounted and self.thinking_container.is_mounted:
-                self.thinking_container.mount(self.thinking_block)
+            # Round 1 (before any flow items): mount at top in thinking_container.
+            # Subsequent rounds (after text/tools): mount chronologically in flow_container.
+            use_flow = (self.flow_container.styles.display == "block") or bool(self.flow_container.children)
+            target_container = self.flow_container if use_flow else self.thinking_container
+            target_container.styles.display = "block"
+            blk = self.thinking_block
+            if self.is_mounted and target_container.is_mounted:
+                target_container.mount(blk)
             else:
-                self.call_after_refresh(lambda: self.thinking_container.mount(self.thinking_block) if self.thinking_container.is_mounted else None)
+                self.call_after_refresh(lambda c=target_container, b=blk: c.mount(b) if c.is_mounted else None)
         return self.thinking_block
 
     def append_thinking(self, chunk: str) -> None:
@@ -626,7 +636,7 @@ class AssistantTurnCard(Vertical):
             return
         if self.loading_block and not self.loading_block.is_finished:
             self.loading_block.finish()
-        if self.thinking_block is None:
+        if self.thinking_block is None or self.thinking_block.is_finished:
             self.start_thinking()
         if self.thinking_block:
             self.thinking_block.append_chunk(chunk)
@@ -654,9 +664,9 @@ class AssistantTurnCard(Vertical):
                     self.thinking_block.remove()
                 except Exception:
                     pass
-                self.thinking_block = None
             else:
                 self.thinking_block.finish()
+            self.thinking_block = None
 
 
     def add_tool(self, tool_name: str, target: str) -> ToolBlock:

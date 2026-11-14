@@ -290,26 +290,6 @@ class WorkerMixin:
 
 
     def start_generation(self, user_prompt: str, resume_existing: bool = False) -> None:
-        if (
-            not resume_existing
-            and self.current_provider not in ("local_gguf", "ollama", "lmstudio", "vllm", "opencode_local", "local_opencode")
-            and not self.settings.get_api_key(self.current_provider)
-        ):
-            from ..modals.api_key import ApiKeyModal
-
-            def _after_key(saved: bool) -> None:
-                if saved and self.settings.get_api_key(self.current_provider):
-                    self.start_generation(user_prompt, resume_existing=False)
-                else:
-                    self.notify(
-                        f"API key required for {self.current_provider}. Configure via /models -> Ctrl+D.",
-                        timeout=4.0,
-                    )
-
-            self.notify("API key required — enter key & server URL to continue.", timeout=3.0)
-            self.push_screen(ApiKeyModal(self.current_provider), _after_key)
-            return
-
         self.is_generating = True
         self.abort_requested = False
         self.auto_scroll_enabled = True
@@ -596,6 +576,29 @@ class WorkerMixin:
                     adds = len(str(res.get("content", "")).splitlines()) or 1
                 self._turn_diff_stats["added"] += adds
                 self._turn_diff_stats["deleted"] += dels
+                if worker_agent_mode == "code" and self.current_session_id == worker_session_id:
+                    unique_files = list(dict.fromkeys(self._last_modified_files))
+                    cnt = len(unique_files)
+                    t_adds = self._turn_diff_stats.get("added", 0)
+                    t_dels = self._turn_diff_stats.get("deleted", 0)
+                    live_details = {
+                        "action": "edit",
+                        "path": unique_files[0] if cnt == 1 else f"{cnt} files",
+                        "file_count": cnt,
+                        "diff_info": f"+{t_adds} -{t_dels} lines" if (t_adds or t_dels) else "",
+                        "files": unique_files,
+                        "lines_added": t_adds,
+                        "lines_deleted": t_dels,
+                        "in_progress": True,
+                    }
+                    def _update_live_bar(d=live_details):
+                        self._post_turn_approval_active = True
+                        try:
+                            bar = self.query_one("#approval-bar", ApprovalBar)
+                            bar.show_request(d)
+                        except Exception:
+                            pass
+                    self.call_from_thread(_update_live_bar)
             _rec_tool(tool_name, target, res)
             live_state["running_tool"] = None
             _call_card("finish_tool", res)
@@ -812,19 +815,35 @@ class WorkerMixin:
                     if self.current_session_id == worker_session_id:
                         self.call_from_thread(self._scroll_chat_to_end_if_enabled)
 
+            has_attached_images = any(
+                isinstance(wm, dict) and bool(wm.get("images"))
+                for wm in worker_messages
+            )
             try:
                 has_vision = self._model_supports_vision()
             except Exception:
                 has_vision = False
+            # Gdy użytkownik już załączył obraz w prompcie ([image 1]), nie pokazuj w narzędziach
+            # <tool:vision>, żeby model nie próbował wywoływać go zamiast od razu opisać obraz.
+            tools_vision = has_vision and not has_attached_images
             p_name = self.settings.config.get("active_system_prompt", "default")
             if p_name == "default":
-                sys_content = self._build_base_system_prompt(vision=has_vision)
+                sys_content = self._build_base_system_prompt(vision=tools_vision)
             else:
                 sys_content = self.system_prompt
             agent_on = self.settings.config.get("agent", {}).get("enabled", True)
             if agent_on:
                 from ...agent.runner import get_agent_system_prompt
-                sys_content += get_agent_system_prompt(worker_workdir, worker_agent_mode, vision=has_vision)
+                sys_content += get_agent_system_prompt(worker_workdir, worker_agent_mode, vision=tools_vision)
+            if has_attached_images:
+                sys_content += (
+                    "\n\nIMAGE INPUT INSTRUCTION:\n"
+                    "The user's attached image(s) ([image 1], [image 2], etc.) are ALREADY embedded directly "
+                    "in this conversation for you to see visually. Inspect the attached image(s) directly and "
+                    "answer the user's question in plain text. NEVER call <tool:vision> for [image 1] or attached "
+                    "images, do NOT claim you cannot see images, and do NOT call codebase/filesystem tools "
+                    "unless the user explicitly asks about files or code."
+                )
 
             if getattr(self, "pinned_files", None):
                 pinned_section = ["\n\nPINNED CONTEXT FILES (/add):"]
@@ -912,7 +931,19 @@ class WorkerMixin:
                     _rec_tool("summarizing", "", sum_res)
 
             payload_messages = [{"role": "system", "content": sys_content}]
-            payload_messages.extend(worker_messages)
+            from ...core.images import build_multimodal_content
+            img_max_dim = 1024 if worker_provider in ("localllmapi", "local_gguf") else 1600
+            for wm in worker_messages:
+                if isinstance(wm, dict) and wm.get("role") == "user" and wm.get("images"):
+                    mm_msg = dict(wm)
+                    mm_msg["content"] = build_multimodal_content(
+                        str(wm.get("content") or ""),
+                        list(wm.get("images") or []),
+                        max_dim=img_max_dim,
+                    )
+                    payload_messages.append(mm_msg)
+                else:
+                    payload_messages.append(wm)
             self._attach_pending_images(payload_messages)
 
             if is_worker_aborted():

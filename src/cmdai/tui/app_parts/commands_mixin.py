@@ -133,7 +133,7 @@ class CommandsMixin:
                 "/diff", "/commit", "/todo", "/bg",
                 "/ctx", "/add", "/mode", "/thinking",
                 "/cd", "/changelog", "/update", "/updatesettings", "/mcp",
-                "/custom", "/map"
+                "/custom", "/plugins", "/memory", "/map"
             )
             if cmd in modal_cmds:
                 pass
@@ -160,7 +160,24 @@ class CommandsMixin:
         except Exception:
             pass
 
-        self.messages.append({"role": "user", "content": prompt, "turn_id": self._turn_counter})
+        pending_imgs = list(getattr(self, "_pending_user_images", None) or [])
+        self._pending_user_images = []
+        if pending_imgs and self.current_provider == "local_gguf":
+            from ...core.model_paths import resolve_model_file
+            from ...core.model_worker import find_matching_mmproj
+            mpath = resolve_model_file(self.current_model_id)
+            if not mpath or not find_matching_mmproj(mpath):
+                self.notify(
+                    "No matching mmproj*.gguf found for this local_gguf model; place its mmproj in models/ or use an API vision model.",
+                    title="Images",
+                    severity="warning",
+                    timeout=4.0,
+                )
+
+        user_entry: Dict[str, Any] = {"role": "user", "content": prompt, "turn_id": self._turn_counter}
+        if pending_imgs:
+            user_entry["images"] = pending_imgs
+        self.messages.append(user_entry)
         self._record_user_turn(prompt, self._turn_counter, time_str=now_str, timestamp=now_ts)
         self._active_view_turn_idx = None
         self._refresh_timeline_rail()
@@ -220,6 +237,8 @@ class CommandsMixin:
             "/updatesettings": self._cmd_update_settings,
             "/mcp": self._cmd_mcp,
             "/custom": self._cmd_custom,
+            "/plugins": self._cmd_plugins,
+            "/memory": self._cmd_memory,
             "/loader": self._cmd_loader,
             "/exit": self._cmd_quit,
         }
@@ -238,6 +257,14 @@ class CommandsMixin:
     def _cmd_custom(self, arg: str = "") -> None:
         from ..modals.custom_commands import CustomCommandsModal
         self.push_screen(CustomCommandsModal(self.workdir), self._on_custom_modal_closed)
+
+    def _cmd_plugins(self, arg: str = "") -> None:
+        from ..modals.plugins import PluginsModal
+        self.push_screen(PluginsModal(self.workdir))
+
+    def _cmd_memory(self, arg: str = "") -> None:
+        from ..modals.memory import MemoryModal
+        self.push_screen(MemoryModal(self.workdir))
 
     def _cmd_map(self, arg: str = "") -> None:
         target = os.path.join(self.workdir, arg.strip()) if arg.strip() else self.workdir
@@ -270,8 +297,6 @@ class CommandsMixin:
         if not arg:
             self.cycle_mode()
             return
-        if arg == "ask":
-            arg = "code"
         if arg in ("auto", "plan", "code"):
             self.agent_mode = arg
             self.settings.config.setdefault("agent", {})["mode"] = self.agent_mode
@@ -331,7 +356,7 @@ class CommandsMixin:
                       "/new", "/params", "/help", "/loader", "/settings",
                       "/tools", "/status", "/diff", "/commit",
                       "/todo", "/bg", "/ctx", "/add", "/mode", "/thinking",
-                      "/changelog", "/update", "/updatesettings", "/mcp", "/exit")
+                      "/changelog", "/update", "/updatesettings", "/mcp", "/custom", "/plugins", "/memory", "/exit")
         if not self.in_chat_mode and cmd not in modal_cmds:
             self._switch_to_chat()
         self._dispatch_command(cmd)

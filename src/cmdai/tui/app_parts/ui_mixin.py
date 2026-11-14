@@ -251,7 +251,7 @@ class UIMixin:
 
     def _get_meta_mode_text(self) -> str:
         color = "#7ee787" if self.agent_mode == "auto" else ("#58a6ff" if self.agent_mode == "plan" else "#d29922")
-        return f"[dim #6e7681]·[/] [b {color}]{self.agent_mode}[/]"
+        return f"[b {color}]{self.agent_mode}[/]"
 
 
     def _get_meta_thinking_text(self) -> str:
@@ -262,7 +262,7 @@ class UIMixin:
         level = normalize_level(self.thinking_level) or cap.default_level
         if level not in cycle_order(cap.levels):
             level = cap.default_level or "medium"
-        return f"[dim #6e7681]·[/] [b #58a6ff]{level}[/]"
+        return f"[b #58a6ff]{level}[/]"
 
 
     def _update_meta_bars(self) -> None:
@@ -274,10 +274,13 @@ class UIMixin:
             self.query_one("#input-meta-left", Static).update(left_markup)
             self.query_one("#input-meta-mode", Static).update(mode_markup)
             think_w = self.query_one("#input-meta-thinking", Static)
+            think_sep = self.query_one("#input-meta-thinking-sep", Static)
             if thinking_markup:
+                think_sep.styles.display = "block"
                 think_w.styles.display = "block"
                 think_w.update(thinking_markup)
             else:
+                think_sep.styles.display = "none"
                 think_w.styles.display = "none"
                 think_w.update("")
             cancel_w = self.query_one("#input-meta-right", Static)
@@ -298,10 +301,13 @@ class UIMixin:
             self.query_one("#hero-meta-left", Static).update(left_markup)
             self.query_one("#hero-meta-mode", Static).update(mode_markup)
             hero_think = self.query_one("#hero-meta-thinking", Static)
+            hero_sep = self.query_one("#hero-meta-thinking-sep", Static)
             if thinking_markup:
+                hero_sep.styles.display = "block"
                 hero_think.styles.display = "block"
                 hero_think.update(thinking_markup)
             else:
+                hero_sep.styles.display = "none"
                 hero_think.styles.display = "none"
                 hero_think.update("")
             self.query_one("#hero-meta-right", Static).update(f"[dim]{rel_work}[/dim]")
@@ -766,10 +772,22 @@ class UIMixin:
         self.cycle_thinking()
 
 
+    @on(events.Click, "#input-meta-left")
+    @on(events.Click, "#hero-meta-left")
+    def on_model_clicked(self, event: events.Click) -> None:
+        self._cmd_models("")
+
+
     @on(events.Click, "#input-meta-mode")
     @on(events.Click, "#hero-meta-mode")
     def on_mode_clicked(self, event: events.Click) -> None:
-        self.cycle_mode()
+        from ..modals.mode import ModeSelectModal
+        self.push_screen(ModeSelectModal(self.agent_mode), self._on_mode_selected)
+
+
+    def _on_mode_selected(self, mode_val: Optional[str]) -> None:
+        if mode_val:
+            self._cmd_mode(mode_val)
 
 
     @on(events.Click, "#input-meta-thinking")
@@ -877,26 +895,29 @@ class UIMixin:
                 self._set_follow_hint(True)
                 return
 
-            # Follow only when already near the bottom; otherwise leave the
-            # user's reading position alone and just hint about new content.
-            try:
-                pos = self._chat_target_y(cs)
-                if float(cs.max_scroll_y) > 0 and pos < (float(cs.max_scroll_y) - 6):
-                    self._set_follow_hint(True)
-                    return
-            except Exception:
-                pass
-
-            # Throttle: token streams call this very often; 5x/s is enough.
+            # Throttle: token streams call this very often; coalesce to once per layout pass.
             now = time.time()
-            if now - getattr(self, "_last_auto_scroll_time", 0.0) < 0.2:
+            if now - getattr(self, "_last_auto_scroll_time", 0.0) < 0.08:
                 return
             self._last_auto_scroll_time = now
             self._set_follow_hint(False)
-            try:
-                cs.scroll_end(animate=False, immediate=True)
-            except TypeError:
-                cs.scroll_end(animate=False)
+
+            def _do_scroll_end() -> None:
+                self._scroll_after_refresh_pending = False
+                if not getattr(self, "auto_scroll_enabled", True):
+                    return
+                if getattr(cs, "is_vertical_scrollbar_grabbed", False):
+                    return
+                if time.time() - getattr(self, "_last_user_scroll_time", 0.0) < 2.0:
+                    return
+                try:
+                    cs.scroll_end(animate=False, immediate=True)
+                except TypeError:
+                    cs.scroll_end(animate=False)
+
+            if not getattr(self, "_scroll_after_refresh_pending", False):
+                self._scroll_after_refresh_pending = True
+                self.call_after_refresh(_do_scroll_end)
         except Exception:
             pass
 

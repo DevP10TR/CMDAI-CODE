@@ -36,6 +36,7 @@ class SimpleGGUFLoader:
         self.current_loader: Optional[str] = None
         self.requested_loader: Optional[str] = None
         self.current_n_ctx: int = 0
+        self.current_use_mmproj: bool = False
         self.last_load_info: Dict[str, Any] = {}
         self.last_load_warning: str = ""
         self._is_loaded = False
@@ -130,6 +131,7 @@ class SimpleGGUFLoader:
         n_ctx: int = 0,
         n_gpu_layers: Optional[int] = None,
         loader_type: Optional[str] = None,
+        use_mmproj: bool = False,
     ) -> bool:
         with self._lock:
             from .settings import get_settings
@@ -140,6 +142,7 @@ class SimpleGGUFLoader:
                 and self.current_model_path
                 and os.path.basename(self.current_model_path) == os.path.basename(model_filename)
                 and self.requested_loader == loader
+                and self.current_use_mmproj == bool(use_mmproj)
                 and self._proc is not None
                 and self._proc.poll() is None
             ):
@@ -160,6 +163,7 @@ class SimpleGGUFLoader:
                 "model": model_filename,
                 "loader": loader,
                 "n_ctx": n_ctx or 8192,
+                "use_mmproj": bool(use_mmproj),
             }
             try:
                 self._proc.stdin.write(json.dumps(req) + "\n")
@@ -174,6 +178,7 @@ class SimpleGGUFLoader:
                     self.requested_loader = loader
                     self.current_loader = res.get("loader") or loader
                     self.current_n_ctx = int(res.get("n_ctx") or req["n_ctx"])
+                    self.current_use_mmproj = bool(use_mmproj)
                     self.last_load_info = res
                     self.last_load_warning = str(res.get("warning") or "")
                     return True
@@ -200,10 +205,15 @@ class SimpleGGUFLoader:
                 and self.current_model_path
                 and os.path.basename(self.current_model_path) != os.path.basename(model_filename)
             )
+            needs_vision = any(
+                isinstance(m, dict) and isinstance(m.get("content"), list)
+                for m in (messages or [])
+            )
             loader_changed = bool(self.requested_loader and self.requested_loader != desired_loader)
-            if not self._is_loaded or model_changed or loader_changed:
+            mmproj_changed = bool(self.current_use_mmproj != needs_vision)
+            if not self._is_loaded or model_changed or loader_changed or mmproj_changed:
                 target = model_filename or self.current_model_path or "gemma-4-E4B-it-Q4_0.gguf"
-                ok = self.load_model(target, loader_type=desired_loader)
+                ok = self.load_model(target, loader_type=desired_loader, use_mmproj=needs_vision)
                 if not ok:
                     err = f"Failed to load model: {target}"
                     if on_token:

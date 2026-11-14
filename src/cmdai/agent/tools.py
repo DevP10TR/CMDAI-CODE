@@ -831,13 +831,26 @@ def tool_screenshot(ctx: AgentContext, target: str = "active_window") -> Dict[st
                 size = os.path.getsize(out)
             except ImportError:
                 pass
-        return {"success": True, "path": out, "size_bytes": size, "target": target}
+        res = {"success": True, "path": out, "size_bytes": size, "target": target}
+        if "." in target and any(target.lower().endswith(ext) for ext in (".html", ".htm", ".py", ".js", ".ts", ".css", ".md", ".txt", ".json")):
+            res["note"] = (
+                f"Captured desktop because '{target}' is a file name, not an OS window title. "
+                "To screenshot a web page, open it in a browser window first and capture that window."
+            )
+        return res
     except Exception as e:
         return {"success": False, "error": f"screenshot failed: {e}"}
 
 
 def tool_vision(ctx: AgentContext, image_path: str = "", question: str = "") -> Dict[str, Any]:
     p = (image_path or "").strip()
+    if re.fullmatch(r"\[?\s*image\s+\d+\s*\]?", p, flags=re.IGNORECASE):
+        return {
+            "success": True,
+            "path": p,
+            "question": (question or "").strip(),
+            "note": "This attached image is already embedded in your conversation prompt — inspect it directly and answer the user without calling <tool:vision> again.",
+        }
     if not p or not os.path.exists(p):
         return {"success": False, "error": f"image not found: {image_path}"}
     if os.path.getsize(p) > SCREENSHOT_MAX_BYTES * 2:
@@ -846,3 +859,33 @@ def tool_vision(ctx: AgentContext, image_path: str = "", question: str = "") -> 
     ctx.pending_images.append(entry)
     return {"success": True, "path": entry["path"], "question": entry["question"],
             "note": "image queued, it will be attached to the next model request"}
+
+
+def tool_memory(
+    ctx: AgentContext,
+    action: str = "list",
+    content: str = "",
+    scope: str = "project",
+    index: int = 0,
+    query: str = "",
+) -> Dict[str, Any]:
+    """Read or update cross-session persistent memory (.cmdai/memory.md / ~/.cmdai/memory.md)."""
+    from ..core.memory import (
+        add_memory_entry,
+        clear_memory,
+        list_memory_entries,
+        remove_memory_entry,
+    )
+
+    act = (action or "list").strip().lower()
+    sc = (scope or "project").strip().lower()
+    if act == "list":
+        data = list_memory_entries(ctx.workdir, scope=sc or "all")
+        return {"success": True, "action": "list", "entries": data}
+    if act == "add":
+        return add_memory_entry(ctx.workdir, content=content, scope=sc)
+    if act == "remove":
+        return remove_memory_entry(ctx.workdir, index=index, query=query, scope=sc)
+    if act == "clear":
+        return clear_memory(ctx.workdir, scope=sc)
+    return {"success": False, "error": f"Unknown memory action: {action}. Use add, list, remove, or clear."}

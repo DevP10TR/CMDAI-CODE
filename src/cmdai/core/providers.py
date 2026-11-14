@@ -606,7 +606,7 @@ def fetch_remote_models(provider_id: str, api_key: str = "") -> List[Dict[str, A
     except Exception:
         is_custom_prov = False
 
-    if not api_key and not is_custom_prov and provider_id not in ("openrouter", "ollama", "lmstudio", "vllm", "local_gguf", "localllmapi"):
+    if not api_key and not is_custom_prov and provider_id not in ("openrouter", "opencode", "opencode_zen", "ollama", "lmstudio", "vllm", "local_gguf", "localllmapi"):
         # No key, so the provider will not tell us anything. The catalogue still
         # can, and a card with a real list beats a card that says "key required"
         # while the list is sitting there.
@@ -783,6 +783,114 @@ def apply_prompt_cache_hints(
     return payload
 
 
+_THINK_TAG_PAIRS: Tuple[Tuple[str, str], ...] = (
+    ("<think>", "</think>"),
+    ("<thought>", "</thought>"),
+    ("<|channel>thought", "<channel|>"),
+    ("<|channel|>thought", "<|channel|>"),
+)
+
+
+class _InlineThinkingParser:
+    """Streaming parser that splits inline reasoning tags from normal content.
+
+    Handles `<think>...</think>`, `<thought>...</thought>`, and Gemma 4's
+    `<|channel>thought ... <channel|>` across arbitrary SSE chunk boundaries,
+    and drops empty/whitespace-only thinking blocks.
+    """
+
+    def __init__(self) -> None:
+        self._buf: str = ""
+        self._active_close: Optional[str] = None
+        self._has_emitted_thought: bool = False
+
+    @staticmethod
+    def _trailing_prefix_len(text: str, candidates: Tuple[str, ...]) -> int:
+        best = 0
+        for tag in candidates:
+            max_k = min(len(text), len(tag) - 1)
+            for k in range(max_k, best, -1):
+                if text.endswith(tag[:k]):
+                    best = k
+                    break
+        return best
+
+    def feed(self, chunk: str) -> Tuple[List[str], List[str]]:
+        content_parts: List[str] = []
+        thinking_parts: List[str] = []
+        if not chunk:
+            return content_parts, thinking_parts
+        self._buf += chunk
+        open_tags = tuple(pair[0] for pair in _THINK_TAG_PAIRS)
+
+        while self._buf:
+            if self._active_close is None:
+                best_idx = -1
+                best_pair: Optional[Tuple[str, str]] = None
+                for pair in _THINK_TAG_PAIRS:
+                    idx = self._buf.find(pair[0])
+                    if idx != -1 and (best_idx == -1 or idx < best_idx):
+                        best_idx = idx
+                        best_pair = pair
+                if best_pair is not None:
+                    if best_idx > 0:
+                        content_parts.append(self._buf[:best_idx])
+                    self._buf = self._buf[best_idx + len(best_pair[0]):]
+                    self._active_close = best_pair[1]
+                    self._has_emitted_thought = False
+                    continue
+
+                hold = self._trailing_prefix_len(self._buf, open_tags)
+                emit_len = len(self._buf) - hold
+                if emit_len > 0:
+                    content_parts.append(self._buf[:emit_len])
+                    self._buf = self._buf[emit_len:]
+                break
+
+            close_tag = self._active_close
+            idx = self._buf.find(close_tag)
+            if idx != -1:
+                t_piece = self._buf[:idx]
+                if not self._has_emitted_thought:
+                    t_piece = t_piece.lstrip()
+                if t_piece:
+                    thinking_parts.append(t_piece)
+                    self._has_emitted_thought = True
+                self._buf = self._buf[idx + len(close_tag):]
+                self._active_close = None
+                self._has_emitted_thought = False
+                continue
+
+            hold = self._trailing_prefix_len(self._buf, (close_tag,))
+            emit_len = len(self._buf) - hold
+            if emit_len > 0:
+                t_piece = self._buf[:emit_len]
+                if not self._has_emitted_thought:
+                    t_piece = t_piece.lstrip()
+                if t_piece:
+                    thinking_parts.append(t_piece)
+                    self._has_emitted_thought = True
+                self._buf = self._buf[emit_len:]
+            break
+
+        return content_parts, thinking_parts
+
+    def flush(self) -> Tuple[List[str], List[str]]:
+        content_parts: List[str] = []
+        thinking_parts: List[str] = []
+        if not self._buf:
+            return content_parts, thinking_parts
+        if self._active_close is None:
+            content_parts.append(self._buf)
+        else:
+            t_piece = self._buf if self._has_emitted_thought else self._buf.lstrip()
+            if t_piece:
+                thinking_parts.append(t_piece)
+                self._has_emitted_thought = True
+        self._buf = ""
+        return content_parts, thinking_parts
+
+
 def stream_chat_completion(
     provider_id: str,
     model_id: str,
@@ -834,12 +942,6 @@ def stream_chat_completion(
     if not info:
         return f"Unknown provider: {provider_id}", ""
 
-    if provider_id not in ("local_gguf", "ollama", "lmstudio", "vllm", "opencode_local", "local_opencode") and not api_key:
-        err_msg = f"API key required for {info.name}. Please configure your API key with Ctrl+D in /models or in config.json."
-        if on_token:
-            on_token(err_msg)
-        return err_msg, ""
-
     if info.needs_custom_auth:
         err_msg = (f"{info.name} needs special authentication, plain API key is not enough.\n"
                    f"{info.auth_hint or 'See provider docs for setup.'}")
@@ -849,7 +951,7 @@ def stream_chat_completion(
 
     full_text = []
     full_thinking = []
-    is_in_thinking = False
+    think_parser = _InlineThinkingParser()
     accumulated_tool_calls: Dict[int, Dict[str, str]] = {}
     # Detection by doing, not by guessing from the name. A model that streams
     # a reasoning channel has just proved it reasons, which is the one fact no
@@ -1041,6 +1143,14 @@ def stream_chat_completion(
             try:
                 chunk = json.loads(data_str)
 
+                if isinstance(chunk, dict) and chunk.get("error"):
+                    err_obj = chunk["error"]
+                    err_detail = err_obj.get("message") if isinstance(err_obj, dict) else str(err_obj)
+                    err_msg = f"Provider error: {err_detail}"
+                    if on_token:
+                        on_token(err_msg)
+                    return err_msg, "".join(full_thinking)
+
                 # 1. Capture usage metadata if provided by endpoint (OpenAI, OpenRouter, Groq, Ollama, LocalLLMAPI, etc.)
                 raw_usage = chunk.get("usage") or chunk.get("x_groq", {}).get("usage")
                 if not raw_usage and ("prompt_eval_count" in chunk or "eval_count" in chunk):
@@ -1104,53 +1214,32 @@ def stream_chat_completion(
                 if not content_delta:
                     continue
 
-                if "<think>" in content_delta:
+                c_parts, t_parts = think_parser.feed(content_delta)
+                for tp in t_parts:
                     _mark_reasoning_observed()
-                    parts = content_delta.split("<think>", 1)
-                    if parts[0] and on_token:
-                        full_text.append(parts[0])
-                        on_token(parts[0])
-                    is_in_thinking = True
-                    remainder = parts[1]
-                    if "</think>" in remainder:
-                        th_parts = remainder.split("</think>", 1)
-                        full_thinking.append(th_parts[0])
-                        if on_thinking:
-                            on_thinking(th_parts[0])
-                        is_in_thinking = False
-                        if th_parts[1] and on_token:
-                            full_text.append(th_parts[1])
-                            on_token(th_parts[1])
-                    else:
-                        full_thinking.append(remainder)
-                        if on_thinking:
-                            on_thinking(remainder)
-                    continue
-
-                if is_in_thinking:
-                    if "</think>" in content_delta:
-                        parts = content_delta.split("</think>", 1)
-                        full_thinking.append(parts[0])
-                        if on_thinking:
-                            on_thinking(parts[0])
-                        is_in_thinking = False
-                        if parts[1] and on_token:
-                            full_text.append(parts[1])
-                            on_token(parts[1])
-                    else:
-                        full_thinking.append(content_delta)
-                        if on_thinking:
-                            on_thinking(content_delta)
-                    continue
-
-                full_text.append(content_delta)
-                if on_token:
-                    on_token(content_delta)
-                if is_stream_tool_or_turn_complete("".join(full_text)):
+                    full_thinking.append(tp)
+                    if on_thinking:
+                        on_thinking(tp)
+                for cp in c_parts:
+                    full_text.append(cp)
+                    if on_token:
+                        on_token(cp)
+                if c_parts and is_stream_tool_or_turn_complete("".join(full_text)):
                     break
 
             except Exception:
                 continue
+
+        c_tail, t_tail = think_parser.flush()
+        for tp in t_tail:
+            _mark_reasoning_observed()
+            full_thinking.append(tp)
+            if on_thinking:
+                on_thinking(tp)
+        for cp in c_tail:
+            full_text.append(cp)
+            if on_token:
+                on_token(cp)
 
         # If API did not return usage, perform accurate fallback estimation
         if not captured_usage or not captured_usage.get("completion_tokens"):

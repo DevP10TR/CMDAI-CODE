@@ -20,34 +20,57 @@ def _safe_command_slug(name: str) -> str:
 
 
 def list_custom_commands(workdir: str) -> List[Dict[str, str]]:
-    """Return custom commands discovered in `<workdir>/.cmdai/commands/*.md`."""
-    cmd_dir = Path(workdir) / ".cmdai" / "commands"
-    if not cmd_dir.is_dir():
-        return []
+    """Return custom commands discovered in `<workdir>/.cmdai/commands/*.md` and enabled plugins."""
     out: List[Dict[str, str]] = []
-    for p in sorted(cmd_dir.glob("*.md")):
-        try:
-            body = p.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            continue
-        first_line = next((ln.strip().lstrip("#").strip() for ln in body.splitlines() if ln.strip()), "")
-        out.append({
-            "name": "/" + p.stem.lower(),
-            "slug": p.stem.lower(),
-            "path": str(p),
-            "description": first_line[:80] or "Custom command",
-            "body": body,
-        })
+    seen_slugs: set[str] = set()
+    cmd_dir = Path(workdir) / ".cmdai" / "commands"
+    if cmd_dir.is_dir():
+        for p in sorted(cmd_dir.glob("*.md")):
+            try:
+                body = p.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            first_line = next((ln.strip().lstrip("#").strip() for ln in body.splitlines() if ln.strip()), "")
+            slug = p.stem.lower()
+            seen_slugs.add(slug)
+            out.append({
+                "name": "/" + slug,
+                "slug": slug,
+                "path": str(p),
+                "description": first_line[:80] or "Custom command",
+                "body": body,
+            })
+    try:
+        from .plugins import get_enabled_plugin_commands
+
+        for pc in get_enabled_plugin_commands(workdir):
+            if pc.get("slug") and pc["slug"] not in seen_slugs:
+                seen_slugs.add(pc["slug"])
+                out.append(pc)
+    except Exception:
+        pass
     return out
 
 
 def get_custom_command_body(workdir: str, cmd_name: str, arg: str = "") -> Optional[str]:
-    """Load and expand a custom slash command (`$ARGUMENTS` placeholder supported)."""
+    """Load and expand a custom or plugin slash command (`$ARGUMENTS` placeholder supported)."""
     slug = _safe_command_slug(cmd_name)
     p = Path(workdir) / ".cmdai" / "commands" / f"{slug}.md"
-    if not p.is_file():
+    body: Optional[str] = None
+    if p.is_file():
+        body = p.read_text(encoding="utf-8", errors="replace").strip()
+    else:
+        try:
+            from .plugins import get_enabled_plugin_commands
+
+            for pc in get_enabled_plugin_commands(workdir):
+                if pc.get("slug") == slug:
+                    body = str(pc.get("body") or "").strip()
+                    break
+        except Exception:
+            pass
+    if not body:
         return None
-    body = p.read_text(encoding="utf-8", errors="replace").strip()
     if "$ARGUMENTS" in body:
         return body.replace("$ARGUMENTS", arg or "")
     return f"{body}\n\n{arg}".strip() if arg else body
@@ -64,18 +87,25 @@ def save_custom_command(workdir: str, name: str, content: str) -> str:
 
 
 def load_hooks(workdir: str) -> Dict[str, Any]:
-    """Load `.cmdai/hooks.json`, returning a normalized dict with `PostToolUse`."""
+    """Load `.cmdai/hooks.json` plus hooks from enabled plugins."""
+    result: Dict[str, Any] = {"PostToolUse": []}
     p = Path(workdir) / ".cmdai" / "hooks.json"
-    if not p.is_file():
-        return {"PostToolUse": []}
+    if p.is_file():
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                post = data.get("PostToolUse")
+                if isinstance(post, list):
+                    result["PostToolUse"].extend(post)
+        except Exception:
+            pass
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            data.setdefault("PostToolUse", [])
-            return data
+        from .plugins import get_enabled_plugin_hooks
+
+        result["PostToolUse"].extend(get_enabled_plugin_hooks(workdir))
     except Exception:
         pass
-    return {"PostToolUse": []}
+    return result
 
 
 def save_hooks(workdir: str, hooks_data: Dict[str, Any]) -> str:

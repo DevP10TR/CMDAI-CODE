@@ -88,6 +88,19 @@ class AutoExpandingInput(TextArea):
         self._load_history()
         self._history_idx: int = -1
         self._pasted_chunks: Dict[str, str] = {}
+        self._pasted_images: Dict[str, str] = {}
+        self._image_counter: int = 0
+
+    def _attach_image_path(self, path: str) -> str:
+        self._image_counter += 1
+        tag = f"[image {self._image_counter}]"
+        while tag in self._pasted_images:
+            self._image_counter += 1
+            tag = f"[image {self._image_counter}]"
+        self._pasted_images[tag] = path
+        self.insert(f"{tag} ")
+        self._update_auto_height()
+        return tag
 
     def _handle_multiline_paste(self, text: str) -> None:
         lines = text.splitlines()
@@ -107,9 +120,10 @@ class AutoExpandingInput(TextArea):
         from rich.style import Style
         from textual.strip import Strip
 
-        badge_pattern = re.compile(r"(\[pasted \d+ lines(?: #\d+)?\])")
+        badge_pattern = re.compile(r"(\[pasted \d+ lines(?: #\d+)?\]|\[image \d+\])")
         mention_pattern = re.compile(r"(@[a-zA-Z0-9_\-\./\\]+)")
         badge_style = Style(color="#ffffff", bgcolor="#0969da", bold=True)
+        image_badge_style = badge_style
         mention_style = Style(color="#58a6ff", bold=True)
 
         new_segments = []
@@ -121,13 +135,14 @@ class AutoExpandingInput(TextArea):
                 new_segments.append(seg)
                 continue
 
-            if "[pasted " in text:
+            if "[pasted " in text or "[image " in text:
                 parts = badge_pattern.split(text)
                 for part in parts:
                     if not part:
                         continue
                     if badge_pattern.match(part):
-                        new_segments.append(Segment(part, badge_style))
+                        st = image_badge_style if part.startswith("[image ") else badge_style
+                        new_segments.append(Segment(part, st))
                         modified = True
                     else:
                         if "@" in part:
@@ -161,6 +176,20 @@ class AutoExpandingInput(TextArea):
 
     def on_paste(self, event: events.Paste) -> None:
         pasted = event.text or ""
+        from ...core.images import grab_clipboard_image_to_temp, is_image_file_path
+        img_path = is_image_file_path(pasted)
+        if img_path:
+            event.prevent_default()
+            event.stop()
+            self._attach_image_path(img_path)
+            return
+        if not pasted.strip():
+            clip_img = grab_clipboard_image_to_temp()
+            if clip_img:
+                event.prevent_default()
+                event.stop()
+                self._attach_image_path(clip_img)
+                return
         lines = pasted.splitlines()
         if len(lines) >= 4 or (len(lines) >= 3 and len(pasted) > 80):
             event.prevent_default()
@@ -204,6 +233,15 @@ class AutoExpandingInput(TextArea):
                     text = text.replace(tag, full_content)
             self._pasted_chunks.clear()
 
+            submitted_images: List[str] = []
+            if self._pasted_images:
+                for m in re.finditer(r"\[image \d+\]", text):
+                    img_p = self._pasted_images.get(m.group(0))
+                    if img_p and img_p not in submitted_images:
+                        submitted_images.append(img_p)
+                self._pasted_images.clear()
+                self._image_counter = 0
+
             if not self._SHARED_HISTORY or self._SHARED_HISTORY[-1] != text:
                 self._SHARED_HISTORY.append(text)
                 self._save_history()
@@ -213,6 +251,8 @@ class AutoExpandingInput(TextArea):
             self.text = ""
             self.cursor_location = (0, 0)
             self._update_auto_height()
+            if app is not None:
+                app._pending_user_images = submitted_images
             if app and hasattr(app, "handle_submit"):
                 app.handle_submit(text)
             else:
@@ -233,6 +273,15 @@ class AutoExpandingInput(TextArea):
         )
 
         key_name = (event.key or "").lower()
+        if key_name in ("ctrl+v", "shift+insert"):
+            from ...core.images import grab_clipboard_image_to_temp
+            clip_img = grab_clipboard_image_to_temp()
+            if clip_img:
+                event.prevent_default()
+                event.stop()
+                self._attach_image_path(clip_img)
+                return
+
         is_enter = (
             key_name in ("enter", "return", "ctrl+m", "ctrl+j", "numpad_enter", "kp_enter")
             or getattr(event, "character", None) in ("\r", "\n")
@@ -428,6 +477,11 @@ class HintRow(Static):
             app._hint_select_and_execute(self.cmd)
 
 
+class _ActionStatic(Static):
+    """Static control that never starts a Textual selection on click."""
+    allow_select = False
+
+
 class ApprovalBar(Horizontal):
     """Codex-style approval bar displayed in 1 clean line without borders inside #input-card."""
 
@@ -452,7 +506,7 @@ class ApprovalBar(Horizontal):
         color: #e6edf3;
     }
     #approval-info:hover {
-        text-style: underline;
+        color: #ffffff;
     }
     #approval-actions {
         width: 22;
@@ -496,13 +550,13 @@ class ApprovalBar(Horizontal):
         classes = f"approval-bar {classes}".strip()
         super().__init__(classes=classes, **kwargs)
         self.pending_details: Optional[Dict[str, Any]] = None
-        self.label_widget = Static("", id="approval-info")
+        self.label_widget = _ActionStatic("", id="approval-info")
 
     def compose(self):
         yield self.label_widget
         with Horizontal(id="approval-actions"):
-            yield Static("Approve", id="approval-btn-approve", classes="approval-btn btn-approve")
-            yield Static("Remove", id="approval-btn-reject", classes="approval-btn btn-reject")
+            yield _ActionStatic("Approve", id="approval-btn-approve", classes="approval-btn btn-approve")
+            yield _ActionStatic("Remove", id="approval-btn-reject", classes="approval-btn btn-reject")
 
     def show_request(self, details: Dict[str, Any]) -> None:
         self.pending_details = details
@@ -542,6 +596,11 @@ class ApprovalBar(Horizontal):
             t = f"[b #d29922]● EDIT:[/] [bold white]{disp_target}[/] [dim]{inspect_hint}[/dim]"
 
         self.label_widget.update(t)
+        try:
+            actions = self.query_one("#approval-actions")
+            actions.styles.display = "block"
+        except Exception:
+            pass
         self.styles.display = "block"
 
     def hide_request(self) -> None:

@@ -234,3 +234,73 @@ async def test_local_model_blocks_background_subagent_allows_command(tmp_path: P
         app.action_send_to_background()
         assert called["bg"] == 1
         assert cmd_block.is_backgrounded is True
+
+
+def test_image_paste_tags_and_multimodal_payload(tmp_path: Path) -> None:
+    import base64
+    from cmdai.core.images import build_multimodal_content, is_image_file_path
+
+    # Minimal 1x1 PNG
+    png_bytes = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    img1 = tmp_path / "shot1.png"
+    img2 = tmp_path / "shot2.png"
+    img1.write_bytes(png_bytes)
+    img2.write_bytes(png_bytes)
+
+    assert is_image_file_path(f'"{img1}"') == str(img1.resolve())
+    mm = build_multimodal_content("Compare [image 1] and [image 2]", [str(img1), str(img2)], max_dim=1024)
+    assert isinstance(mm, list)
+    assert mm[0] == {"type": "text", "text": "Compare [image 1] and [image 2]"}
+    assert mm[1]["type"] == "image_url"
+    assert mm[1]["image_url"]["url"].startswith("data:image/")
+    assert mm[2]["image_url"]["url"].startswith("data:image/")
+
+    from cmdai.core.model_worker import find_matching_mmproj
+    m_qwen = tmp_path / "Qwen2-VL-2B-Instruct-Q4_K_M.gguf"
+    m_mmproj = tmp_path / "mmproj-Qwen2-VL-2B-Instruct-Q8_0.gguf"
+    m_qwen.write_bytes(b"gguf")
+    m_mmproj.write_bytes(b"mmproj")
+    assert find_matching_mmproj(str(m_qwen)) == str(m_mmproj)
+
+
+@pytest.mark.asyncio
+async def test_meta_bar_click_opens_mode_and_model_modals(tmp_path: Path) -> None:
+    from textual import events
+    from cmdai.tui.modals.mode import ModeSelectModal
+    from cmdai.tui.modals.models import ModelSelectModal
+    from cmdai.tui.widgets.input_box import AutoExpandingInput
+
+    app = CMDAICodeTUI(workdir=str(tmp_path))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Mode text has no leading bullet separator
+        assert not app._get_meta_mode_text().startswith("[dim #6e7681]·")
+
+        # Clicking #hero-meta-mode opens ModeSelectModal
+        await pilot.click("#hero-meta-mode")
+        await pilot.pause()
+        assert isinstance(app.screen_stack[-1], ModeSelectModal)
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(app.screen_stack) == 1
+
+        # Clicking #hero-meta-left opens ModelSelectModal
+        await pilot.click("#hero-meta-left")
+        await pilot.pause()
+        assert isinstance(app.screen_stack[-1], ModelSelectModal)
+        await pilot.press("escape")
+        await pilot.pause()
+
+        # Pasting image path into AutoExpandingInput creates [image 1] tag
+        png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4"
+        img = tmp_path / "clip.png"
+        img.write_bytes(png_bytes)
+        inp = app.query_one("#hero-prompt-input", AutoExpandingInput)
+        inp.focus()
+        inp.on_paste(events.Paste(str(img)))
+        await pilot.pause()
+        assert "[image 1]" in inp.text
+        assert inp._pasted_images.get("[image 1]") == str(img.resolve())

@@ -215,7 +215,7 @@ class ModelSelectModal(ModalScreen[Tuple[str, str]]):
         custom_provs = self.settings.get_custom_providers()
         for pid in PROVIDERS_CATALOG:
             key = self.settings.get_api_key(pid)
-            if key or pid in KEYLESS or pid == "localllmapi" or pid in custom_provs:
+            if key or pid in KEYLESS or pid in ("localllmapi", "opencode") or pid in custom_provs:
                 self.fetch_provider_models(pid, key)
 
     def _fetch_one(self, pid: str) -> None:
@@ -293,7 +293,7 @@ class ModelSelectModal(ModalScreen[Tuple[str, str]]):
             elif key:
                 parts.append("key set")
             elif pid not in KEYLESS:
-                parts.append("key required")
+                parts.append("no key")
             when = self.fetched_at.get(pid)
             if when and (time.time() - when) > 300:
                 parts.append(_age_text(when))
@@ -305,7 +305,7 @@ class ModelSelectModal(ModalScreen[Tuple[str, str]]):
             # screen is choosing from.
             return ("add a model - no list to fetch", "dim #8b949e")
         if not key and pid not in KEYLESS:
-            return ("key required", "dim #8b949e")
+            return ("no key (optional)", "dim #8b949e")
         if pid in self.failed_providers:
             return ("no answer", "#f0883e")
         return ("nothing yet", "dim #8b949e")
@@ -612,7 +612,7 @@ class ModelListModal(ModalScreen[Optional[Tuple[str, str]]]):
         if self.provider_id in LOCAL_PROVIDERS:
             return "Nothing found on this machine."
         if not self.settings.get_api_key(self.provider_id) and self.provider_id not in KEYLESS:
-            return "No API key set. Ctrl+D adds one."
+            return "No API key set (optional). Ctrl+D adds one, Ctrl+R refreshes."
         if self.failed:
             when = _age_text(self.fetched_at) if self.fetched_at else ""
             return f"No answer from the provider{f' ({when})' if when else ''}."
@@ -668,16 +668,6 @@ class ModelListModal(ModalScreen[Optional[Tuple[str, str]]]):
         kind, data = self._current()
         if kind == "model":
             model_id = str(data.get("id") or "")
-            if self.provider_id not in LOCAL_PROVIDERS and not self.settings.get_api_key(self.provider_id):
-                def _after_key(saved: bool) -> None:
-                    if saved and self.settings.get_api_key(self.provider_id):
-                        self.dismiss((self.provider_id, model_id))
-                    elif saved:
-                        self.notify("API key cannot be empty.", timeout=3.0)
-
-                self.notify("API key required — configure key & server URL first.", timeout=3.0)
-                self.app.push_screen(ApiKeyModal(self.provider_id), _after_key)
-                return
             self.dismiss((self.provider_id, model_id))
         elif kind == "add":
             self.action_add_model()

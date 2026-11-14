@@ -153,10 +153,11 @@ class AskModal(ModalScreen[Any]):
                 t.append(tab_label, style="#8b949e")
             t.append("  ")
 
-        if self.is_summary_mode:
-            t.append(" Summary ", style="bold #ffffff on #1f6feb")
-        else:
-            t.append(" Summary ", style="#8b949e")
+        if total > 1 or self.is_summary_mode:
+            if self.is_summary_mode:
+                t.append(" Summary ", style="bold #ffffff on #1f6feb")
+            else:
+                t.append(" Summary ", style="#8b949e")
         return t
 
     @staticmethod
@@ -207,8 +208,9 @@ class AskModal(ModalScreen[Any]):
 
             with Horizontal(id="modal-footer"):
                 max_key = len(self.all_choices)
+                nav_hint = "  [←/→: Question]" if len(self.questions) > 1 else ""
                 yield Static(
-                    f"[1-{max_key}: Pick]  [←/→: Question]  [enter: Confirm]",
+                    f"[1-{max_key}: Pick]{nav_hint}  [enter: Confirm]",
                     id="ask-footer-keys",
                 )
 
@@ -272,8 +274,9 @@ class AskModal(ModalScreen[Any]):
             ol.focus()
 
             max_key = len(self.all_choices)
+            nav_hint = "  [←/→: Question]" if len(self.questions) > 1 else ""
             self.query_one("#ask-footer-keys", Static).update(
-                f"[1-{max_key}: Pick]  [←/→: Question]  [enter: Confirm]"
+                f"[1-{max_key}: Pick]{nav_hint}  [enter: Confirm]"
             )
 
     def _submit_answer(self, ans: str) -> None:
@@ -281,9 +284,11 @@ class AskModal(ModalScreen[Any]):
         if self.current_idx + 1 < len(self.questions):
             self.current_idx += 1
             self._refresh_view()
-        else:
+        elif len(self.questions) > 1:
             self.is_summary_mode = True
             self._refresh_view()
+        else:
+            self._finish_and_dismiss()
 
     def _finish_and_dismiss(self) -> None:
         result_list = []
@@ -339,7 +344,7 @@ class AskModal(ModalScreen[Any]):
             if self.current_idx + 1 < len(self.questions):
                 self.current_idx += 1
                 self._refresh_view()
-            else:
+            elif len(self.questions) > 1:
                 self.is_summary_mode = True
                 self._refresh_view()
 

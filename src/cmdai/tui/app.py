@@ -438,8 +438,10 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
                     yield VerticalScroll(id="hero-cmd-hints")
                     yield AutoExpandingInput(id="hero-prompt-input")
                     with Horizontal(id="hero-meta-bar"):
-                        yield Static("", id="hero-meta-left")
+                        yield Static("", id="hero-meta-left", classes="meta-clickable")
+                        yield Static("[dim #6e7681]·[/]", classes="meta-sep")
                         yield Static("", id="hero-meta-mode", classes="meta-clickable")
+                        yield Static("[dim #6e7681]·[/]", id="hero-meta-thinking-sep", classes="meta-sep")
                         yield Static("", id="hero-meta-thinking", classes="meta-clickable")
                         yield Static("", id="hero-meta-spacer")
                         rel_work = os.path.basename(self.workdir) or self.workdir
@@ -469,8 +471,10 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
                     yield VerticalScroll(id="cmd-hints")
                     yield AutoExpandingInput(id="prompt-input")
                     with Horizontal(id="input-meta-bar"):
-                        yield Static("", id="input-meta-left")
+                        yield Static("", id="input-meta-left", classes="meta-clickable")
+                        yield Static("[dim #6e7681]·[/]", classes="meta-sep")
                         yield Static("", id="input-meta-mode", classes="meta-clickable")
+                        yield Static("[dim #6e7681]·[/]", id="input-meta-thinking-sep", classes="meta-sep")
                         yield Static("", id="input-meta-thinking", classes="meta-clickable")
                         yield Static("", id="input-meta-spacer")
                         yield Static("", id="input-meta-right")
@@ -559,6 +563,11 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
     @on(SessionTabsBar.NewTabRequested)
     def on_session_new_tab_requested(self, msg: SessionTabsBar.NewTabRequested) -> None:
         super().on_session_new_tab_requested(msg)
+
+    @on(events.Click, "#input-meta-left")
+    @on(events.Click, "#hero-meta-left")
+    def on_model_clicked(self, event: events.Click) -> None:
+        super().on_model_clicked(event)
 
     @on(events.Click, "#input-meta-mode")
     @on(events.Click, "#hero-meta-mode")

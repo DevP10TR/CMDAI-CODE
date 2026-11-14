@@ -35,6 +35,8 @@ COMMANDS_DOC: Dict[str, str] = {
     "/mcp": "MCP servers status and configuration",
     "/system": "Pick, create or switch system prompt",
     "/custom": "Create or manage custom slash commands (.cmdai/commands/*.md) and hooks",
+    "/plugins": "Enable, disable, create or delete local plugins (.cmdai/plugins)",
+    "/memory": "View and manage cross-session persistent memory (.cmdai/memory.md)",
     "/settings": "Configure application settings",
     "/changelog": "Show GitHub releases changelog",
     "/update": "Pull the latest code",
@@ -156,9 +158,9 @@ SHORTCUTS_DOC: Dict[str, Dict[str, str]] = {
 HELP_CATEGORIES: List[Tuple[str, List[str]]] = [
     ("Chat & Sessions", ["/new", "/help", "/sessions", "/summarize", "/stats"]),
     ("Code Agent & Git", ["/editor", "/git", "/diff", "/commit", "/todo", "/bg", "/mode"]),
-    ("Context & Files", ["/cd", "/add", "/drop", "/ctx"]),
+    ("Context & Files", ["/cd", "/add", "/drop", "/ctx", "/memory"]),
     ("Model & Reasoning", ["/models", "/modelinfo", "/params", "/system", "/thinking"]),
-    ("Configuration & Engine", ["/settings", "/loader", "/update", "/updatesettings", "/changelog", "/mcp", "/exit"]),
+    ("Configuration & Engine", ["/settings", "/loader", "/update", "/updatesettings", "/changelog", "/mcp", "/custom", "/plugins", "/exit"]),
     ("Keyboard Shortcuts", list(SHORTCUTS_DOC.keys())),
 ]
 

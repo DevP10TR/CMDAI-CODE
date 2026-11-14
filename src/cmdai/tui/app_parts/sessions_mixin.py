@@ -478,6 +478,7 @@ class SessionsMixin:
                 session_id=target_id,
                 messages=self.messages,
                 model_id=self.current_model_id,
+                provider_id=self.current_provider,
                 stats=self.stats,
                 title=self.session_title,
                 transcript=list(self._transcript),
@@ -525,7 +526,7 @@ class SessionsMixin:
                     except Exception:
                         self.call_from_thread(self._update_terminal_title)
                 return
-            if self.current_provider == "local_gguf" and self.is_generating:
+            if self.current_provider in ("local_gguf", "localllmapi") and self.is_generating:
                 return
             first_u = next((str(m.get("content", "")) for m in self.messages if m.get("role") == "user"), "")
             if not first_u:
@@ -588,6 +589,8 @@ class SessionsMixin:
                     is_aborted=lambda: self.is_generating or self.abort_requested,
                 )
             else:
+                if self.current_provider == "localllmapi" and self.is_generating:
+                    return
                 from ...core.providers import stream_chat_completion
                 title, think = stream_chat_completion(
                     provider_id=self.current_provider,
@@ -1482,6 +1485,14 @@ class SessionsMixin:
             from ...core.sessions import reconcile_transcript
             transcript = data.get("transcript")
             self._transcript = reconcile_transcript(transcript, self.messages)
+
+        target_provider = active_info.get("provider_id") or data.get("provider_id")
+        if target_provider:
+            tp = str(target_provider)
+            if tp in ("opencode_local", "local_opencode"):
+                tp = "local_gguf"
+            self.current_provider = tp
+            self.settings.config["default_provider"] = self.current_provider
 
         target_model = active_info.get("model_id") or data.get("model_id")
         if target_model:

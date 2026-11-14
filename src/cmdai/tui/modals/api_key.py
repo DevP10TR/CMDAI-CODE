@@ -45,7 +45,7 @@ class ApiKeyModal(ModalScreen[bool]):
             yield Input(
                 value=current_key,
                 password=True,
-                placeholder="Enter API Key here...",
+                placeholder="Enter API Key (optional)...",
                 id="api-key-input",
             )
 

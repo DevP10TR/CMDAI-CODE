@@ -20,6 +20,7 @@ from .tools import (
     tool_edit,
     tool_glob,
     tool_ls,
+    tool_memory,
     tool_read,
     tool_scratch,
     tool_screenshot,
@@ -1012,6 +1013,11 @@ class AgentRunner:
         mode_low = str(mode or "auto").lower().strip()
         if mode_low == "plan" and name in ("write", "edit", "command", "shell", "bash", "cmd"):
             return "deny"
+        if name == "memory":
+            act = str((args or {}).get("action") or "list").strip().lower()
+            if mode_low == "plan" and act in ("add", "remove", "clear"):
+                return "deny"
+            return "allow"
 
         def _resolve_decision(dec: str) -> str:
             d = str(dec or "").lower().strip()
@@ -1019,12 +1025,27 @@ class AgentRunner:
                 d = "ask"
             if mode_low == "auto" and d == "ask":
                 return "allow"
+            # In code mode, file edits inside the workspace flow to the live
+            # ApprovalBar + post-turn Approve/Remove rollback instead of blocking
+            # mid-turn before every write/edit.
+            if mode_low == "code" and d == "ask" and name in ("write", "edit"):
+                target_path = str((args or {}).get("path") or "").strip()
+                ctx = getattr(self, "ctx", None)
+                workdir = getattr(ctx, "workdir", None) if ctx is not None else None
+                if target_path and workdir:
+                    try:
+                        abs_work = os.path.abspath(workdir)
+                        abs_target = os.path.abspath(os.path.join(abs_work, target_path))
+                        if abs_target == abs_work or abs_target.startswith(abs_work + os.sep):
+                            return "allow"
+                    except Exception:
+                        pass
+                elif target_path and not os.path.isabs(target_path):
+                    return "allow"
             return d
 
         perms = getattr(self, "permissions", None)
         if not perms or not isinstance(perms, dict):
-            if mode_low == "ask" and name in ("write", "edit", "command", "shell", "bash", "cmd"):
-                return "ask"
             if mode_low == "code" and name in ("command", "shell", "bash", "cmd"):
                 return "ask"
             return "allow"
@@ -1034,8 +1055,6 @@ class AgentRunner:
             rule = perms.get("command") or perms.get("bash")
 
         if rule is None:
-            if mode_low == "ask" and name in ("write", "edit", "command", "shell", "bash", "cmd"):
-                return "ask"
             if mode_low == "code" and name in ("command", "shell", "bash", "cmd"):
                 return "ask"
             return "allow"
@@ -1580,6 +1599,20 @@ class AgentRunner:
                     self.on_tool_finish("vision", image_path, res)
                 return res
 
+            elif name == "memory":
+                act = str(args.get("action") or "list").strip()
+                scope = str(args.get("scope") or "project").strip()
+                content = str(args.get("content") or args.get("text") or "")
+                idx = int(args.get("index") or 0) if str(args.get("index") or "").isdigit() else 0
+                query = str(args.get("query") or "")
+                target = f"{act} ({scope})"
+                if notify and self.on_tool_start:
+                    self.on_tool_start("memory", target)
+                res = tool_memory(self.ctx, action=act, content=content, scope=scope, index=idx, query=query)
+                if notify and self.on_tool_finish:
+                    self.on_tool_finish("memory", target, res)
+                return res
+
             elif name == "mcp":
                 wanted = (args.get("server") or args.get("name") or "").strip()
                 if notify and self.on_tool_start:
@@ -1614,7 +1647,7 @@ class AgentRunner:
             display_name = tool_name or name
             target_str = str(args.get("path") or args.get("prompt") or args.get("cmd") or args.get("target") or args.get("url") or "")
             has_vis = bool(self.vision_capable and self.vision_capable())
-            allowed_tools = "read, write, edit, ls, glob, search, command, web, todo, ask, subagent, mcp"
+            allowed_tools = "read, write, edit, ls, glob, search, command, web, todo, ask, subagent, mcp, memory"
             if has_vis:
                 allowed_tools += ", screenshot, vision"
             err_res = {
@@ -1679,11 +1712,6 @@ class AgentRunner:
                 tools=list(SUBAGENT_AVAILABLE_TOOLS),
                 context={"workdir": call_workdir, "subagent_id": raw.get("_sid", "")},
             )
-            if mode == "ask":
-                # Ask mode needs a human OK for write/edit/command, and a
-                # subagent cannot ask mid-run. Take the tools away instead of
-                # letting it write unattended.
-                task.tools = [t for t in task.tools if t not in ("write", "edit", "command")]
             tasks.append(task)
 
         # SubagentOrchestrator calls tool_executor_factory(role), not
@@ -2182,11 +2210,12 @@ def _full_tools_block(vision: bool) -> str:
         "<tool:mcp__NAME__TOOL>{\"arg\": \"value\"}</tool:mcp__NAME__TOOL> with a JSON "
         "object between the tags. Only the two `mcp` tools are listed here on purpose: "
         "server tools appear in context only after you open a server, so you never have to "
-        "guess a name. Writing tools are approved by the user at call time.\n"
+        "guess a name. In Code mode, file edits are reviewed in the live diff bar at the end of the turn.\n"
         "13. Spawn Subagent: <tool:subagent name=\"Role\" system=\"instructions for the subagent\">the task it must do</tool:subagent> (optional attribute background=\"true\" to run in background)\n"
+        "14. Persistent Memory: <tool:memory action=\"add|list|remove|clear\" scope=\"project|global\" content=\"concise fact\" /> (saves cross-session facts/preferences)\n"
         + (
-            "14. Screenshot: <tool:screenshot target=\"active_window\" /> (captures a window to a PNG file)\n"
-            "15. Vision: <tool:vision image_path=\"path.png\" question=\"what to check\" /> (attaches the image to your next request)\n"
+            "15. Screenshot: <tool:screenshot target=\"active_window\" /> (captures an OS window title or 'active_window'/'desktop' to PNG; never pass a file path like index.html — open it in a browser window first)\n"
+            "16. Vision: <tool:vision image_path=\"path.png\" question=\"what to check\" /> (attaches the image to your next request)\n"
             if vision else ""
         )
     )
@@ -2207,22 +2236,39 @@ _FULL_DIRECTIVES_BLOCK = (
 
 
 def load_project_instructions(workdir: str = ".") -> str:
-    """Read project-specific rules from AGENTS.md, CLAUDE.md, or .cursorrules if present."""
+    """Read project rules (AGENTS.md/CLAUDE.md), cross-session memory, and enabled plugin rules."""
     import os
-    if not workdir or not os.path.isdir(workdir):
-        return ""
-    candidates = ["AGENTS.md", "agents.md", ".agents.md", "CLAUDE.md", ".cursorrules"]
-    for fname in candidates:
-        fpath = os.path.join(workdir, fname)
-        if os.path.isfile(fpath):
-            try:
-                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read().strip()
-                if content:
-                    return f"\n\n### PROJECT-SPECIFIC RULES & INSTRUCTIONS (`{fname}`):\n{content}\n"
-            except Exception:
-                pass
-    return ""
+    sections: List[str] = []
+    if workdir and os.path.isdir(workdir):
+        candidates = ["AGENTS.md", "agents.md", ".agents.md", "CLAUDE.md", ".cursorrules"]
+        for fname in candidates:
+            fpath = os.path.join(workdir, fname)
+            if os.path.isfile(fpath):
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read().strip()
+                    if content:
+                        sections.append(f"\n\n### PROJECT-SPECIFIC RULES & INSTRUCTIONS (`{fname}`):\n{content}\n")
+                        break
+                except Exception:
+                    pass
+    try:
+        from ..core.memory import format_memory_hint
+
+        mem_hint = format_memory_hint(workdir or ".")
+        if mem_hint:
+            sections.append(f"\n\n### PERSISTENT MEMORY:\n{mem_hint}\n")
+    except Exception:
+        pass
+    try:
+        from ..core.plugins import get_enabled_plugin_rules
+
+        plug_block = get_enabled_plugin_rules(workdir or ".")
+        if plug_block:
+            sections.append(f"\n\n### ENABLED PLUGIN RULES:\n{plug_block}\n")
+    except Exception:
+        pass
+    return "".join(sections)
 
 
 def get_agent_system_prompt(workdir: str = ".", mode: str = "auto", vision: bool = False) -> str:

@@ -513,7 +513,7 @@ Tooltip.-timeline-tooltip {
 }
 
 #approval-info:hover {
-    text-style: underline;
+    color: #ffffff;
 }
 
 #approval-actions {
@@ -639,6 +639,12 @@ HintRow.selected, .cmd-hint.selected {
     margin-right: 1;
 }
 
+.meta-sep {
+    width: auto;
+    margin-right: 1;
+    color: #6e7681;
+}
+
 #input-meta-spacer {
     width: 1fr;
 }
@@ -685,7 +691,6 @@ HintRow.selected, .cmd-hint.selected {
 
 .meta-clickable:hover {
     color: #ffffff;
-    text-style: underline;
 }
 
 /* ═════════════════════════════════════════════════════════════
