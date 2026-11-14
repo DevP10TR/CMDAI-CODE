@@ -534,7 +534,7 @@ class CommandsMixin:
                 )
                 self.call_from_thread(
                     self.notify,
-                    f"CMDAI CODE {ver_label} is available - run [b]/update[/b] to install it.",
+                    ver_label,
                     timeout=6.0,
                 )
             except Exception:
