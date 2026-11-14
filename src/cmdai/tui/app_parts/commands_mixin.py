@@ -527,7 +527,11 @@ class CommandsMixin:
                     if not silent_if_current:
                         self.call_from_thread(self.notify, "CMDAI CODE is up to date.", timeout=2.5)
                     return
-                ver_label = f"{latest_tag} -> {current_tag}" if current_tag else latest_tag
+                ver_label = (
+                    f"[b #f0883e]{latest_tag}[/] [dim]-->[/] [#8b949e]{current_tag}[/]"
+                    if current_tag
+                    else f"[b #f0883e]{latest_tag}[/]"
+                )
                 self.call_from_thread(
                     self.notify,
                     f"CMDAI CODE {ver_label} is available - run [b]/update[/b] to install it.",
