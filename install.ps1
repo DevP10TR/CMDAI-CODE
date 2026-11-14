@@ -173,7 +173,7 @@ if (-not $Local) {
         New-Item -ItemType Directory -Path $binDir -Force | Out-Null
     }
     $cmdaiCmd = Join-Path $binDir "cmdai.cmd"
-    $cmdaiContent = "@echo off`r`n`"$installDir\cmdai.bat`" %*"
+    $cmdaiContent = "@echo off`r`n`"$installDir\cmdai code.bat`" %*"
     [System.IO.File]::WriteAllText($cmdaiCmd, $cmdaiContent, [System.Text.Encoding]::ASCII)
 
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
