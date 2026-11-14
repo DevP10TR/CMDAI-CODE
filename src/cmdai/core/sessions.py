@@ -187,6 +187,7 @@ class SessionManager:
         named_by_model: Optional[bool] = None,
         todo_list: Optional[List[Any]] = None,
         pending_approval: Optional[Dict[str, Any]] = None,
+        provider_id: Optional[str] = None,
     ) -> bool:
         if not session_id:
             session_id = f"session_{int(time.time())}"
@@ -277,6 +278,7 @@ class SessionManager:
             "named_by_model": bool(named_by_model if named_by_model is not None else (existing.get("named_by_model", False) if existing else False)),
             "directory": os.path.abspath(workdir or self.project_dir),
             "model_id": model_id,
+            "provider_id": provider_id or (existing.get("provider_id") if existing else "") or "",
             "mode": agent_mode or "code",
             "stats": stats or {},
             "tokens": {

@@ -21,6 +21,7 @@ TOOL_COMPLETE_PATTERNS = re.compile(
 )
 
 try:
+    import llama_cpp
     from llama_cpp import Llama, llama_log_set
     def _null_log(level, text, user_data):
         pass
@@ -30,7 +31,77 @@ try:
     except Exception:
         pass
 except Exception:
+    llama_cpp = None
     Llama = None
+
+
+def _gpu_offload_supported() -> Optional[bool]:
+    if not llama_cpp:
+        return None
+    for owner in (llama_cpp, getattr(llama_cpp, "llama_cpp", None)):
+        fn = getattr(owner, "llama_supports_gpu_offload", None)
+        if callable(fn):
+            try:
+                return bool(fn())
+            except Exception:
+                pass
+    return None
+
+
+def find_matching_mmproj(model_path: str) -> Optional[str]:
+    """Find a matching mmproj*.gguf file in the same directory as `model_path`."""
+    if not model_path or not os.path.isfile(model_path):
+        return None
+    model_dir = os.path.dirname(model_path)
+    model_low = os.path.basename(model_path).lower()
+    candidates = [
+        f for f in sorted(os.listdir(model_dir))
+        if f.lower().endswith(".gguf") and "mmproj" in f.lower()
+    ]
+    if not candidates:
+        return None
+    # Score candidates by shared family / model tokens (e.g. gemma-4, qwen2-vl, llava)
+    model_tokens = [t for t in model_low.replace(".gguf", "").replace("_", "-").split("-") if len(t) >= 2 and not t.startswith(("q4", "q5", "q6", "q8", "f16", "iq"))]
+    best = None
+    best_score = -1
+    for c in candidates:
+        clow = c.lower().replace("_", "-")
+        score = sum(1 for t in model_tokens if t in clow)
+        if score > best_score:
+            best_score = score
+            best = c
+    if best and best_score > 0:
+        return os.path.join(model_dir, best)
+    # If there's only one mmproj in the dir and model itself looks multimodal, allow it only if token matched
+    return None
+
+
+def _create_vision_chat_handler(model_path: str, mmproj_path: str) -> Any:
+    """Instantiate the appropriate llama-cpp-python vision chat handler."""
+    import llama_cpp.llama_chat_format as lcf  # type: ignore
+
+    low = os.path.basename(model_path).lower()
+    cls_names: List[str] = []
+    if "gemma-4" in low or "gemma4" in low:
+        cls_names.append("Gemma4ChatHandler")
+    elif "qwen2.5-vl" in low or "qwen2_5-vl" in low or "qwen2-vl" in low or "qwen2vl" in low or "qwen3-vl" in low:
+        cls_names.append("Qwen25VLChatHandler")
+    elif "minicpm" in low:
+        cls_names.append("MiniCPMv26ChatHandler")
+    elif "moondream" in low:
+        cls_names.append("MoondreamChatHandler")
+    elif "llava-1.6" in low or "llava-v1.6" in low:
+        cls_names.append("Llava16ChatHandler")
+    cls_names.extend(["MTMDChatHandler", "Llava15ChatHandler"])
+
+    for name in cls_names:
+        cls = getattr(lcf, name, None)
+        if cls is not None:
+            try:
+                return cls(clip_model_path=mmproj_path, verbose=False)
+            except Exception:
+                continue
+    return None
 
 
 class ModelWorker:
@@ -38,6 +109,10 @@ class ModelWorker:
         self.llm = None
         self.current_model_path = None
         self.current_model_id = None
+        self.current_loader = None
+        self.requested_loader = None
+        self.current_n_ctx = 0
+        self.current_mmproj = ""
         self.abort_requested = False
         self.msg_queue = queue.Queue()
         self._listener_thread = None
@@ -55,63 +130,116 @@ class ModelWorker:
                 from model_paths import resolve_model_file
         return resolve_model_file(model_filename) or None
 
-    def load(self, model_filename: str, loader_type: str = "cpu", n_ctx: int = 2048) -> Dict[str, Any]:
+    def load(self, model_filename: str, loader_type: str = "cpu", n_ctx: int = 2048, use_mmproj: bool = False) -> Dict[str, Any]:
         if not Llama:
             return {"status": "error", "error": "llama_cpp not installed"}
         path = self.find_model_path(model_filename)
         if not path:
             return {"status": "error", "error": f"Model not found: {model_filename}"}
 
-        if self.llm is not None and self.current_model_path == path:
-            return {"status": "ok", "elapsed": 0.0, "cached": True}
+        mmproj_path = (find_matching_mmproj(path) or "") if use_mmproj else ""
+        norm_loader = (loader_type or "cpu").strip().lower()
+        target_ctx = int(n_ctx or 8192)
+        if (
+            self.llm is not None
+            and self.current_model_path == path
+            and self.requested_loader == norm_loader
+            and self.current_mmproj == mmproj_path
+            and (self.current_n_ctx == target_ctx or not self.current_n_ctx)
+        ):
+            return {
+                "status": "ok",
+                "elapsed": 0.0,
+                "cached": True,
+                "n_ctx": self.current_n_ctx or target_ctx,
+                "loader": self.current_loader or norm_loader,
+                "requested_loader": norm_loader,
+                "mmproj": self.current_mmproj,
+            }
 
         t0 = time.time()
-        n_gpu = -1 if loader_type.lower() in ("vulkan", "cuda") else 0
+        gpu_offload = _gpu_offload_supported()
+        warning = ""
+        if norm_loader in ("vulkan", "cuda"):
+            if gpu_offload is False:
+                n_gpu = 0
+                effective_loader = "cpu"
+                warning = f"{norm_loader.upper()} requested, but installed llama-cpp-python has no GPU offload support; running on CPU."
+            else:
+                n_gpu = -1
+                effective_loader = norm_loader
+        elif norm_loader == "cpu":
+            n_gpu = 0
+            effective_loader = "cpu"
+        else:
+            n_gpu = 0
+            effective_loader = "cpu"
+            warning = f"Loader '{norm_loader}' is not supported by llama-cpp-python; using CPU."
+
+        chat_handler = _create_vision_chat_handler(path, mmproj_path) if mmproj_path else None
+
+        def _create_llama(ctx_len: int, gpu_layers: int):
+            kwargs: Dict[str, Any] = {
+                "model_path": path,
+                "n_ctx": ctx_len,
+                "n_gpu_layers": gpu_layers,
+                "flash_attn": True,
+                "verbose": False,
+            }
+            if chat_handler is not None:
+                kwargs["chat_handler"] = chat_handler
+            try:
+                return Llama(**kwargs), ctx_len
+            except Exception:
+                if ctx_len > 8192:
+                    kwargs["n_ctx"] = 8192
+                    return Llama(**kwargs), 8192
+                raise
+
         try:
             if self.llm is not None:
                 del self.llm
                 self.llm = None
 
-            target_ctx = int(n_ctx or 8192)
-            try:
-                self.llm = Llama(
-                    model_path=path,
-                    n_ctx=target_ctx,
-                    n_gpu_layers=n_gpu,
-                    flash_attn=True,
-                    verbose=False,
-                )
-            except Exception:
-                if target_ctx > 8192:
-                    target_ctx = 8192
-                    self.llm = Llama(
-                        model_path=path,
-                        n_ctx=target_ctx,
-                        n_gpu_layers=n_gpu,
-                        flash_attn=True,
-                        verbose=False,
-                    )
-                else:
-                    raise
+            self.llm, actual_ctx = _create_llama(target_ctx, n_gpu)
             self.current_model_path = path
             self.current_model_id = model_filename
+            self.current_loader = effective_loader
+            self.requested_loader = norm_loader
+            self.current_n_ctx = actual_ctx
+            self.current_mmproj = mmproj_path if chat_handler is not None else ""
             elapsed = time.time() - t0
-            return {"status": "ok", "elapsed": elapsed, "n_ctx": target_ctx}
+            return {
+                "status": "ok",
+                "elapsed": elapsed,
+                "n_ctx": actual_ctx,
+                "loader": effective_loader,
+                "requested_loader": norm_loader,
+                "n_gpu_layers": n_gpu,
+                "gpu_offload": gpu_offload,
+                "mmproj": self.current_mmproj,
+                "warning": warning,
+            }
         except Exception as e:
             if n_gpu != 0:
                 try:
-                    target_ctx = 8192 if int(n_ctx or 8192) > 8192 else int(n_ctx or 8192)
-                    self.llm = Llama(
-                        model_path=path,
-                        n_ctx=target_ctx,
-                        n_gpu_layers=0,
-                        flash_attn=True,
-                        verbose=False,
-                    )
+                    self.llm, actual_ctx = _create_llama(target_ctx, 0)
                     self.current_model_path = path
                     self.current_model_id = model_filename
+                    self.current_loader = "cpu"
+                    self.requested_loader = norm_loader
+                    self.current_n_ctx = actual_ctx
                     elapsed = time.time() - t0
-                    return {"status": "ok", "elapsed": elapsed, "n_ctx": target_ctx}
+                    return {
+                        "status": "ok",
+                        "elapsed": elapsed,
+                        "n_ctx": actual_ctx,
+                        "loader": "cpu",
+                        "requested_loader": norm_loader,
+                        "n_gpu_layers": 0,
+                        "gpu_offload": gpu_offload,
+                        "warning": f"{norm_loader.upper()} initialization failed ({e}); fell back to CPU.",
+                    }
                 except Exception as e2:
                     return {"status": "error", "error": str(e2)}
             return {"status": "error", "error": str(e)}
@@ -138,7 +266,17 @@ class ModelWorker:
         except Exception:
             n_ctx_total = 8192
 
-        def _count_tokens(text: str) -> int:
+        def _count_tokens(content_val: Any) -> int:
+            if isinstance(content_val, list):
+                toks = 0
+                for part in content_val:
+                    if isinstance(part, dict):
+                        if part.get("type") == "image_url":
+                            toks += 512
+                        else:
+                            toks += _count_tokens(str(part.get("text") or ""))
+                return toks
+            text = str(content_val or "")
             try:
                 return len(self.llm.tokenize(text.encode("utf-8", errors="replace"), add_bos=False))
             except Exception:
@@ -147,10 +285,23 @@ class ModelWorker:
         cleaned_msgs = []
         for m in messages:
             role = m.get("role", "user")
-            content = str(m.get("content", "") or "")
-            if len(content) > 7000:
-                content = content[:3000] + "\n\n[... content truncated to fit context window ...]\n\n" + content[-3000:]
-            cleaned_msgs.append({"role": role, "content": content})
+            raw_content = m.get("content", "")
+            if isinstance(raw_content, list):
+                mm_parts = []
+                for part in raw_content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        txt = str(part.get("text") or "")
+                        if len(txt) > 7000:
+                            txt = txt[:3000] + "\n\n[... content truncated to fit context window ...]\n\n" + txt[-3000:]
+                        mm_parts.append({"type": "text", "text": txt})
+                    elif isinstance(part, dict):
+                        mm_parts.append(part)
+                cleaned_msgs.append({"role": role, "content": mm_parts})
+            else:
+                content = str(raw_content or "")
+                if len(content) > 7000:
+                    content = content[:3000] + "\n\n[... content truncated to fit context window ...]\n\n" + content[-3000:]
+                cleaned_msgs.append({"role": role, "content": content})
 
         mt = 1024 if (not max_tokens or max_tokens <= 0) else int(max_tokens)
         safe_budget = max(1024, n_ctx_total - mt - 128)
@@ -324,6 +475,7 @@ class ModelWorker:
                     model_filename=msg.get("model", ""),
                     loader_type=msg.get("loader", "cpu"),
                     n_ctx=msg.get("n_ctx", 8192),
+                    use_mmproj=bool(msg.get("use_mmproj", False)),
                 )
                 sys.stdout.write(json.dumps(res) + "\n")
                 sys.stdout.flush()
@@ -341,6 +493,9 @@ class ModelWorker:
                     self.llm = None
                 self.current_model_path = None
                 self.current_model_id = None
+                self.current_loader = None
+                self.requested_loader = None
+                self.current_n_ctx = 0
                 sys.stdout.write(json.dumps({"status": "unloaded"}) + "\n")
                 sys.stdout.flush()
             elif action == "exit":

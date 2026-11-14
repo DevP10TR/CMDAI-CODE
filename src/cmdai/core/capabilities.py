@@ -201,6 +201,7 @@ EFFORT_BUDGET_FIELDS: Dict[str, str] = {
     # sglang ignore it if they are not configured for it. OpenCode sends it to
     # local servers the same way.
     "local_gguf": "reasoning_budget_tokens",
+    "localllmapi": "reasoning_budget_tokens",
     "lmstudio": "reasoning_budget_tokens",
     "vllm": "reasoning_budget_tokens",
     "ollama": "reasoning_budget_tokens",
@@ -228,7 +229,7 @@ def effort_budget_field(provider_id: str) -> str:
 # spend 32k of thinking and still have an answer, and `max` at 128k on a local
 # server is a request it can only answer by ignoring it. So for these the levels
 # are a percentage of the context, and the absolute numbers are derived from it.
-LOCAL_BUDGET_PROVIDERS = frozenset({"local_gguf", "lmstudio", "vllm", "ollama"})
+LOCAL_BUDGET_PROVIDERS = frozenset({"local_gguf", "localllmapi", "lmstudio", "vllm", "ollama"})
 
 # Providers a plugin has declared to be running on this machine, as opposed to
 # the four the core ships with. A provider that cannot be reached from a data
@@ -511,7 +512,7 @@ def inspect_gguf_metadata(gguf_path: str) -> Optional[ModelCapability]:
             tpl_low = tpl_str.lower()
             has_t = any(
                 kw in tpl_low
-                for kw in ("enable_thinking", "<think>", "thinking_mode", "reasoning_content", "think_budget", "<|channel|>thought", "<|think|>")
+                for kw in ("enable_thinking", "<think>", "thinking_mode", "reasoning_content", "think_budget", "<|channel>thought", "<|channel|>thought", "<|think|>")
             ) or _infer_thinking_from_id(os.path.basename(gguf_path))
             if ctx_lim > 0 or vision or has_t:
                 return _build_capability(
@@ -588,6 +589,7 @@ def inspect_gguf_metadata(gguf_path: str) -> Optional[ModelCapability]:
                 "thinking_mode",
                 "reasoning_content",
                 "think_budget",
+                "<|channel>thought",
                 "<|channel|>thought",
                 "<|think|>",
             ]
@@ -617,6 +619,7 @@ def inspect_gguf_metadata(gguf_path: str) -> Optional[ModelCapability]:
                 levels=levels,
                 default_level="medium",
                 thinking_tags=(("<think>", "</think>") if "<think>" in template_str
+                               else ("<|channel>thought", "<channel|>") if "<|channel>thought" in template_str
                                else ("<|think|>", "<|turn|>model")),
                 vision=vision,
                 image_param_style="mmproj" if vision else "none",
@@ -728,7 +731,7 @@ def _infer_vision_from_id(model_id: str) -> bool:
     }
     if tokens & vlm_tokens:
         return True
-    if re.search(r"(?:qwen[\d.]*vl|internvl\d*|llava|pixtral|minicpm-?v|\d+b-vl|vl-\d+b)", mid):
+    if re.search(r"(?:qwen[\d.]*vl|internvl\d*|llava|pixtral|minicpm-?v|\d+b-vl|vl-\d+b|gemma[-_]?4)", mid):
         return True
     return False
 
@@ -1125,6 +1128,17 @@ def get_model_capability(
             cache.pop(cache_key, None)
             _save_cache(cache)
         elif "confidence" in item and "vision" in item:
+            cached_vis = bool(item.get("vision", False))
+            # If an older name_heuristic cache entry recorded vision=False
+            # before vision heuristics or server metadata were updated (e.g.
+            # Gemma 4 via LocalLLMAPI), upgrade it instead of staying stuck.
+            if not cached_vis and src == "name_heuristic" and _infer_vision_from_id(model_id):
+                cached_vis = True
+                item = dict(item)
+                item["vision"] = True
+                item["image_param_style"] = "mmproj" if provider_id in ("local_gguf", "localllmapi") else "inline_base64"
+                cache[cache_key] = item
+                _save_cache(cache)
             cap = _build_capability(
                 item.get("model_id", model_id),
                 thinking=item.get("thinking", False),
@@ -1133,7 +1147,7 @@ def get_model_capability(
                 default_level=item.get("default_level", ""),
                 max_budget=item.get("max_budget", 32768),
                 thinking_tags=tuple(item.get("thinking_tags", ("<think>", "</think>"))),
-                vision=item.get("vision", False),
+                vision=cached_vis,
                 image_param_style=item.get("image_param_style", "none"),
                 mmproj_path=item.get("mmproj_path"),
                 confidence=item.get("confidence", "high"),
@@ -1146,7 +1160,9 @@ def get_model_capability(
             _MEM_CACHE[cache_key] = cap
             return cap
 
-    if provider_id == "local_gguf" or (model_path and os.path.exists(model_path)) or model_id.endswith(".gguf"):
+    if provider_id == "local_gguf" or (
+        not provider_id and ((model_path and os.path.exists(model_path)) or model_id.endswith(".gguf"))
+    ):
         actual_path = model_path
         if not actual_path or not os.path.exists(actual_path):
             # Was a six-entry candidate list including D:\\, E:\\ and

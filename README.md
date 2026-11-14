@@ -123,7 +123,7 @@ Once installed, use the global `cmdai` command from any directory:
 ```text
 CMDAI-CODE/
 ├── cmdai.py                  # Main CLI entry point
-├── cmdai.bat                 # Windows batch launcher
+├── cmdai code.bat            # Windows batch launcher
 ├── install.ps1               # Automated PowerShell installer with CC progress bar
 ├── install.bat               # Local installation batch wrapper
 ├── package.json              # NPM package definition (supports npx github:...)

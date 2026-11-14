@@ -1,5 +1,6 @@
 from datetime import datetime, date
 from typing import Any, Dict, List, Optional
+from rich.markup import escape
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
@@ -215,7 +216,7 @@ class SessionsModal(ModalScreen[str]):
                     else:
                         d_disp = dir_name
                     parts_plain.append(f"({d_disp})")
-                    parts_markup.append(f"[dim]({d_disp})[/]")
+                    parts_markup.append(f"[dim]({escape(d_disp)})[/]")
 
                 right_plain = "  ".join(parts_plain)
                 right_markup = "  ".join(parts_markup)
@@ -231,7 +232,7 @@ class SessionsModal(ModalScreen[str]):
 
                 pad_len = max(2, 90 - badge_plain_len - len(title_str) - len(right_plain))
                 spaces = " " * pad_len
-                row = f"{badge}[bold white]{title_str}[/]{spaces}{right_markup}"
+                row = f"{badge}[bold white]{escape(title_str)}[/]{spaces}{right_markup}"
                 t_row = Text.from_markup(row)
                 t_row.no_wrap = True
                 t_row.overflow = "ellipsis"

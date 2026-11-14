@@ -406,45 +406,90 @@ def tool_ls(ctx: AgentContext, path: str = ".") -> Dict[str, Any]:
 
 def tool_glob(ctx: AgentContext, pattern: str = "*", dir: str = ".") -> Dict[str, Any]:
     full_dir = ctx.resolve_path(dir)
+    if not os.path.exists(full_dir):
+        return {"success": False, "error": f"Directory not found: {dir}", "matches": [], "count": 0}
+    if not os.path.isdir(full_dir):
+        return {"success": False, "error": f"Not a directory: {dir}", "matches": [], "count": 0}
     search_pattern = os.path.join(full_dir, pattern)
+    ignored = {".git", "node_modules", ".venv", "__pycache__", ".pytest_cache", ".cmdai_code_project", ".gemini"}
     try:
         matches = py_glob.glob(search_pattern, recursive=True)
-        rel_matches = [ctx.rel_path(m) for m in matches[:100]]
-        return {
+        rel_matches = []
+        for m in matches:
+            rel = ctx.rel_path(m)
+            parts = set(rel.replace("\\", "/").split("/"))
+            if parts & ignored:
+                continue
+            rel_matches.append(rel)
+            if len(rel_matches) >= 100:
+                break
+        res: Dict[str, Any] = {
             "success": True,
             "pattern": pattern,
             "matches": rel_matches,
             "count": len(rel_matches),
         }
+        if not rel_matches:
+            res["note"] = "No matching workspace files found."
+        return res
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 
-def tool_search(ctx: AgentContext, query: str, path: str = ".") -> Dict[str, Any]:
+def tool_search(
+    ctx: AgentContext,
+    query: str,
+    path: str = ".",
+    literal: bool = False,
+) -> Dict[str, Any]:
     full_path = ctx.resolve_path(path)
-    results = []
+    if not os.path.exists(full_path):
+        return {"success": False, "error": f"Path not found: {path}"}
+
+    compiled_re = None
+    if not literal and query:
+        try:
+            compiled_re = re.compile(query)
+        except re.error:
+            compiled_re = None
+
+    def _line_matches(line_str: str) -> bool:
+        if query in line_str:
+            return True
+        if compiled_re is not None and compiled_re.search(line_str):
+            return True
+        return False
+
+    def _scan_file(file_path: str, acc: List[Dict[str, Any]]) -> None:
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as file_obj:
+                for line_num, line in enumerate(file_obj, 1):
+                    if _line_matches(line):
+                        acc.append({
+                            "file": ctx.rel_path(file_path),
+                            "line": line_num,
+                            "content": line.strip(),
+                        })
+                        if len(acc) >= 50:
+                            break
+        except Exception:
+            pass
+
+    results: List[Dict[str, Any]] = []
     try:
-        for root, _, files in os.walk(full_path):
-            if any(ign in root for ign in [".git", "node_modules", ".venv", "__pycache__"]):
-                continue
-            for f in files:
-                f_path = os.path.join(root, f)
-                try:
-                    with open(f_path, "r", encoding="utf-8", errors="ignore") as file_obj:
-                        for line_num, line in enumerate(file_obj, 1):
-                            if query in line:
-                                results.append({
-                                    "file": ctx.rel_path(f_path),
-                                    "line": line_num,
-                                    "content": line.strip(),
-                                })
-                                if len(results) >= 50:
-                                    break
-                except Exception:
-                    continue
+        if os.path.isfile(full_path):
+            _scan_file(full_path, results)
+        else:
+            ignored = {".git", "node_modules", ".venv", "__pycache__", ".cmdai_code_project"}
+            for root, dirs, files in os.walk(full_path):
+                dirs[:] = [d for d in dirs if d not in ignored]
+                for f in files:
+                    _scan_file(os.path.join(root, f), results)
+                    if len(results) >= 50:
+                        break
                 if len(results) >= 50:
                     break
-        return {"success": True, "query": query, "results": results}
+        return {"success": True, "query": query, "path": ctx.rel_path(full_path), "results": results}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -786,13 +831,26 @@ def tool_screenshot(ctx: AgentContext, target: str = "active_window") -> Dict[st
                 size = os.path.getsize(out)
             except ImportError:
                 pass
-        return {"success": True, "path": out, "size_bytes": size, "target": target}
+        res = {"success": True, "path": out, "size_bytes": size, "target": target}
+        if "." in target and any(target.lower().endswith(ext) for ext in (".html", ".htm", ".py", ".js", ".ts", ".css", ".md", ".txt", ".json")):
+            res["note"] = (
+                f"Captured desktop because '{target}' is a file name, not an OS window title. "
+                "To screenshot a web page, open it in a browser window first and capture that window."
+            )
+        return res
     except Exception as e:
         return {"success": False, "error": f"screenshot failed: {e}"}
 
 
 def tool_vision(ctx: AgentContext, image_path: str = "", question: str = "") -> Dict[str, Any]:
     p = (image_path or "").strip()
+    if re.fullmatch(r"\[?\s*image\s+\d+\s*\]?", p, flags=re.IGNORECASE):
+        return {
+            "success": True,
+            "path": p,
+            "question": (question or "").strip(),
+            "note": "This attached image is already embedded in your conversation prompt — inspect it directly and answer the user without calling <tool:vision> again.",
+        }
     if not p or not os.path.exists(p):
         return {"success": False, "error": f"image not found: {image_path}"}
     if os.path.getsize(p) > SCREENSHOT_MAX_BYTES * 2:
@@ -801,3 +859,33 @@ def tool_vision(ctx: AgentContext, image_path: str = "", question: str = "") -> 
     ctx.pending_images.append(entry)
     return {"success": True, "path": entry["path"], "question": entry["question"],
             "note": "image queued, it will be attached to the next model request"}
+
+
+def tool_memory(
+    ctx: AgentContext,
+    action: str = "list",
+    content: str = "",
+    scope: str = "project",
+    index: int = 0,
+    query: str = "",
+) -> Dict[str, Any]:
+    """Read or update cross-session persistent memory (.cmdai/memory.md / ~/.cmdai/memory.md)."""
+    from ..core.memory import (
+        add_memory_entry,
+        clear_memory,
+        list_memory_entries,
+        remove_memory_entry,
+    )
+
+    act = (action or "list").strip().lower()
+    sc = (scope or "project").strip().lower()
+    if act == "list":
+        data = list_memory_entries(ctx.workdir, scope=sc or "all")
+        return {"success": True, "action": "list", "entries": data}
+    if act == "add":
+        return add_memory_entry(ctx.workdir, content=content, scope=sc)
+    if act == "remove":
+        return remove_memory_entry(ctx.workdir, index=index, query=query, scope=sc)
+    if act == "clear":
+        return clear_memory(ctx.workdir, scope=sc)
+    return {"success": False, "error": f"Unknown memory action: {action}. Use add, list, remove, or clear."}

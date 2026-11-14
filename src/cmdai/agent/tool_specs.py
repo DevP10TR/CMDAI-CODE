@@ -152,6 +152,29 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "required": ["name", "task"],
         },
     },
+    {
+        "name": "memory",
+        "description": "Save, list, remove, or clear persistent cross-session memory entries (project or global).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["add", "list", "remove", "clear"],
+                    "description": "Memory operation to perform.",
+                },
+                "content": {"type": "string", "description": "Fact or preference to remember (for 'add')."},
+                "scope": {
+                    "type": "string",
+                    "enum": ["project", "global", "all"],
+                    "description": "Memory scope: 'project' (.cmdai/memory.md) or 'global' (~/.cmdai/memory.md).",
+                },
+                "index": {"type": "integer", "description": "1-based entry index to remove."},
+                "query": {"type": "string", "description": "Substring match to remove."},
+            },
+            "required": ["action"],
+        },
+    },
 ]
 
 

@@ -212,9 +212,10 @@ class ModelSelectModal(ModalScreen[Tuple[str, str]]):
     # ---------------------------------------------------------- fetching
 
     def refresh_all(self) -> None:
+        custom_provs = self.settings.get_custom_providers()
         for pid in PROVIDERS_CATALOG:
             key = self.settings.get_api_key(pid)
-            if key or pid in KEYLESS:
+            if key or pid in KEYLESS or pid in ("localllmapi", "opencode") or pid in custom_provs:
                 self.fetch_provider_models(pid, key)
 
     def _fetch_one(self, pid: str) -> None:
@@ -291,6 +292,8 @@ class ModelSelectModal(ModalScreen[Tuple[str, str]]):
                 parts.append("local")
             elif key:
                 parts.append("key set")
+            elif pid not in KEYLESS:
+                parts.append("no key")
             when = self.fetched_at.get(pid)
             if when and (time.time() - when) > 300:
                 parts.append(_age_text(when))
@@ -302,7 +305,7 @@ class ModelSelectModal(ModalScreen[Tuple[str, str]]):
             # screen is choosing from.
             return ("add a model - no list to fetch", "dim #8b949e")
         if not key and pid not in KEYLESS:
-            return ("key required", "dim #8b949e")
+            return ("no key (optional)", "dim #8b949e")
         if pid in self.failed_providers:
             return ("no answer", "#f0883e")
         return ("nothing yet", "dim #8b949e")
@@ -464,7 +467,12 @@ class ModelListModal(ModalScreen[Optional[Tuple[str, str]]]):
             yield OptionList(id="modal-list")
 
             with Horizontal(id="modal-footer"):
-                yield Static("enter: Select  ·  ctrl+a: Add  ·  F5: Refresh  ·  esc: Back")
+                hint = (
+                    "enter: Select  ·  ctrl+a: Add  ·  F5: Refresh  ·  esc: Back"
+                    if self.provider_id in LOCAL_PROVIDERS
+                    else "enter: Select  ·  ctrl+d: Key / URL  ·  ctrl+a: Add  ·  F5: Refresh  ·  esc: Back"
+                )
+                yield Static(hint)
                 yield Static("", id="modal-footer-right")
 
     def on_mount(self) -> None:
@@ -604,7 +612,7 @@ class ModelListModal(ModalScreen[Optional[Tuple[str, str]]]):
         if self.provider_id in LOCAL_PROVIDERS:
             return "Nothing found on this machine."
         if not self.settings.get_api_key(self.provider_id) and self.provider_id not in KEYLESS:
-            return "No API key set. Ctrl+D adds one."
+            return "No API key set (optional). Ctrl+D adds one, Ctrl+R refreshes."
         if self.failed:
             when = _age_text(self.fetched_at) if self.fetched_at else ""
             return f"No answer from the provider{f' ({when})' if when else ''}."
@@ -659,7 +667,8 @@ class ModelListModal(ModalScreen[Optional[Tuple[str, str]]]):
     def action_activate(self) -> None:
         kind, data = self._current()
         if kind == "model":
-            self.dismiss((self.provider_id, str(data.get("id") or "")))
+            model_id = str(data.get("id") or "")
+            self.dismiss((self.provider_id, model_id))
         elif kind == "add":
             self.action_add_model()
 
