@@ -17,7 +17,7 @@
 ## 🌟 About
 
 **CMDAI CODE** is an autonomous terminal coding agent running directly inside your Windows console (Windows Terminal & PowerShell). Built from the ground up for privacy, speed, and developer autonomy:
-- **Local-First**: Native support for quantized `.gguf` models via `llama.cpp` with Vulkan / CPU acceleration — write code completely offline without sending data to external servers.
+- **Local-First**: Native support for quantized `.gguf` models via `llama.cpp` with Vulkan / CPU acceleration — write code completely offline without sending data to external servers. Works best with **[LocalLLMAPI](https://github.com/DevP10TR/LocalLLMAPI)** for dedicated Vulkan/CUDA/CPU multi-slot local serving.
 - **Multi-Provider Cloud**: Seamless integration with top AI providers (OpenCode Zen, OpenRouter, Anthropic Claude, OpenAI, Google Gemini, Ollama, vLLM, and any custom OpenAI-compatible endpoints).
 - **Autonomous Subagents & Background Workers**: Delegate heavy tasks to specialized subagents (Code Reviewer, Tester, Refactor) running synchronously or in the background (`Ctrl+B` / `/bg`).
 - **Modern Terminal UI (TUI)**: Minimalist, clean GitHub Dark styled interface built on Textual — featuring real-time colored diffs, a session manager, and native Model Context Protocol (MCP) support.
