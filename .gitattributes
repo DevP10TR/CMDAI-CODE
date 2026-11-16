@@ -1,0 +1,36 @@
+# Exclude GitHub templates, community guidelines, and CI from downloaded archives/ZIPs
+.github export-ignore
+.github/** export-ignore
+CONTRIBUTING.md export-ignore
+
+# Exclude Git files
+.gitattributes export-ignore
+.gitignore export-ignore
+
+# Exclude developer test suites and test caches
+tests export-ignore
+tests/** export-ignore
+.pytest_cache export-ignore
+.pytest_cache/** export-ignore
+**/.pytest_cache/** export-ignore
+
+# Exclude Python bytecode, caches, and build artifacts
+__pycache__ export-ignore
+__pycache__/** export-ignore
+**/__pycache__/** export-ignore
+*.egg-info export-ignore
+*.egg-info/** export-ignore
+src/*.egg-info export-ignore
+src/*.egg-info/** export-ignore
+
+# Exclude internal developer scratchpads, local project data, and logs
+scratch export-ignore
+scratch/** export-ignore
+logs export-ignore
+logs/** export-ignore
+cache export-ignore
+cache/** export-ignore
+.cmdai export-ignore
+.cmdai/** export-ignore
+.cmdai_code_project export-ignore
+.cmdai_code_project/** export-ignore
