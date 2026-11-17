@@ -46,13 +46,18 @@ class UserMessageCard(Vertical):
     }
     """
 
-    def __init__(self, prompt: str = "", turn_id: int = -1, label: str = "user · actions", time_str: str = "", **kwargs):
+    def __init__(self, prompt: str = "", turn_id: int = -1, label: str = "user · actions", time_str: str = "", timestamp: Optional[float] = None, **kwargs):
         classes = kwargs.pop("classes", "")
         classes = f"user-card {classes}".strip()
         super().__init__(classes=classes, **kwargs)
         self.prompt = prompt
         self.turn_id = turn_id
-        self.time_str = time_str or time.strftime("%H:%M")
+        if timestamp is not None:
+            self.timestamp = float(timestamp)
+            self.time_str = time_str or time.strftime("%H:%M", time.localtime(self.timestamp))
+        else:
+            self.timestamp = None
+            self.time_str = str(time_str or "")
         if "·" in label:
             p1, p2 = label.split("·", 1)
             hdr = f"[bold #58a6ff]{p1.strip()}[/] [dim #6e7681]· {p2.strip()}[/]"

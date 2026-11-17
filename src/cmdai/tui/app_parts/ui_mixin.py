@@ -209,7 +209,13 @@ class UIMixin:
         except Exception:
             pass
 
+        running_sids = set(str(s) for s in (getattr(self, "_active_generation_sessions", set()) or set()) if s)
         if self.is_generating or bg_active:
+            curr_sid = str(getattr(self, "current_session_id", "") or "")
+            if curr_sid:
+                running_sids.add(curr_sid)
+
+        if self.is_generating or bg_active or running_sids:
             self._meta_spinner_idx = (self._meta_spinner_idx + 1) % len(self.SPINNER_FRAMES)
             self._update_meta_bars()
             if prev_bg != bg_active and self._current_assistant_card is not None:
@@ -217,6 +223,14 @@ class UIMixin:
                     self._current_assistant_card.update_header()
                 except Exception:
                     pass
+            try:
+                tabs_bar = self.query_one("#session-tabs-bar", SessionTabsBar)
+                if not tabs_bar.has_class("hidden"):
+                    markers = getattr(self, "META_MARKERS", ["⌬", "✻"])
+                    frame = markers[(self._meta_spinner_idx // 4) % len(markers)]
+                    tabs_bar.update_running_states(running_sids, frame=frame)
+            except Exception:
+                pass
         else:
             if self._meta_spinner_idx != 0 or prev_bg != bg_active:
                 self._meta_spinner_idx = 0
@@ -226,6 +240,12 @@ class UIMixin:
                         self._current_assistant_card.update_header()
                     except Exception:
                         pass
+            try:
+                tabs_bar = self.query_one("#session-tabs-bar", SessionTabsBar)
+                if not tabs_bar.has_class("hidden"):
+                    tabs_bar.update_running_states(set(), frame="⌬")
+            except Exception:
+                pass
             if self.in_chat_mode and has_notifs:
                 if getattr(self, "_post_turn_approval_active", False):
                     # Do not auto-dismiss approval bar or start generation while user has pending file approval!
@@ -430,28 +450,49 @@ class UIMixin:
             self._open_diff_window()
 
 
+    _TIMELINE_NUDGE_PREFIXES = (
+        "Kontynuuj na podstawie",
+        "Nie zatrzymuj się na samej",
+        "Wywołaj teraz subagenta",
+        "oraz przedstawić zwięzłe",
+    )
+
+    def _get_timeline_user_cards(self, scroll: VerticalScroll) -> List[UserMessageCard]:
+        return [
+            c for c in scroll.children
+            if isinstance(c, UserMessageCard)
+            and not getattr(c, "_pruning", False)
+            and not any(str(getattr(c, "prompt", "") or "").startswith(p) for p in self._TIMELINE_NUDGE_PREFIXES)
+        ]
+
     def _update_timeline_active_on_scroll(self, scroll: VerticalScroll) -> None:
         try:
-            # If user explicitly clicked a dot, hold that active selection during animation and settling
-            if getattr(self, "_timeline_nav_target_idx", None) is not None:
-                if (time.time() - getattr(self, "_timeline_nav_time", 0.0) < 1.5) or getattr(scroll, "is_scrolling", False):
+            cur_y = float(getattr(scroll, "scroll_y", 0) or 0)
+            # If user explicitly clicked a dot, hold that active selection until scroll settles and user scrolls away
+            nav_idx = getattr(self, "_timeline_nav_target_idx", None)
+            if nav_idx is not None:
+                elapsed = time.time() - float(getattr(self, "_timeline_nav_time", 0.0) or 0.0)
+                if getattr(scroll, "is_scrolling", False) or elapsed < 0.6:
+                    return
+                settled_y = getattr(self, "_timeline_nav_settled_y", None)
+                if settled_y is None:
+                    self._timeline_nav_settled_y = cur_y
+                    return
+                if abs(cur_y - float(settled_y)) <= 1.5:
                     return
                 self._timeline_nav_target_idx = None
+                self._timeline_nav_settled_y = None
 
             rail = self.query_one("#chat-timeline-rail", TimelineRail)
             if not rail or "hidden" in rail.classes or not rail._turns:
                 return
 
-            user_cards = [
-                c for c in scroll.children
-                if isinstance(c, UserMessageCard) and not getattr(c, "_pruning", False)
-            ]
+            user_cards = self._get_timeline_user_cards(scroll)
             if not user_cards:
                 return
 
             total = len(user_cards)
             max_y = float(getattr(scroll, "max_scroll_y", 0) or 0)
-            cur_y = float(getattr(scroll, "scroll_y", 0) or 0)
 
             if cur_y <= 1:
                 active_idx = 0
@@ -461,9 +502,12 @@ class UIMixin:
                 active_idx = 0
                 best_dist = float("inf")
                 for idx, c in enumerate(user_cards):
-                    reg_y = getattr(getattr(c, "region", None), "y", None)
-                    if reg_y is not None:
-                        dist = abs(reg_y - cur_y)
+                    vreg = getattr(c, "virtual_region", None)
+                    card_y = getattr(vreg, "y", None)
+                    if card_y is None:
+                        card_y = getattr(getattr(c, "region", None), "y", None)
+                    if card_y is not None:
+                        dist = abs(float(card_y) - cur_y)
                         if dist < best_dist:
                             best_dist = dist
                             active_idx = idx
@@ -480,7 +524,7 @@ class UIMixin:
         try:
             chat_scroll = self.query_one("#chat-scroll", VerticalScroll)
             target = None
-            user_cards = [c for c in chat_scroll.children if isinstance(c, UserMessageCard) and not getattr(c, "_pruning", False)]
+            user_cards = self._get_timeline_user_cards(chat_scroll)
             if 0 <= msg.turn_idx < len(user_cards):
                 target = user_cards[msg.turn_idx]
             else:
@@ -493,6 +537,7 @@ class UIMixin:
                 self._active_view_turn_id = getattr(target, "turn_id", msg.turn_id)
                 self._timeline_nav_target_idx = msg.turn_idx
                 self._timeline_nav_time = time.time()
+                self._timeline_nav_settled_y = None
                 try:
                     rail = self.query_one("#chat-timeline-rail", TimelineRail)
                     rail.set_active_turn_idx(msg.turn_idx)
@@ -556,8 +601,6 @@ class UIMixin:
                             t_str = time.strftime("%H:%M", time.localtime(float(item["timestamp"])))
                         except Exception:
                             t_str = ""
-                    if not t_str:
-                        t_str = getattr(self, "_current_session_time_str", "") or ""
                     turns.append({"turn_id": tid, "text": prompt, "time": t_str})
 
         if not turns:
@@ -641,7 +684,8 @@ class UIMixin:
                     t = s_data.get("title") or "New session"
                 except Exception:
                     t = "New session"
-            tabs_data.append({"session_id": sid, "title": t})
+            is_running = (sid in active_sids) or (sid == cur_sid and bool(getattr(self, "is_generating", False)))
+            tabs_data.append({"session_id": sid, "title": t, "is_running": is_running})
 
         tabs_bar.update_tabs(tabs_data, active_id=cur_sid)
 

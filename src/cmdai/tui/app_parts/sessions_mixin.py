@@ -326,6 +326,8 @@ class SessionsMixin:
                     "kind": "user",
                     "text": str(getattr(child, "prompt", "") or ""),
                     "turn_id": int(getattr(child, "turn_id", 0) or 0),
+                    "time": str(getattr(child, "time_str", "") or ""),
+                    "timestamp": getattr(child, "timestamp", None),
                 })
             elif isinstance(child, AssistantTurnCard):
                 tb = getattr(child, "thinking_block", None)
@@ -921,11 +923,9 @@ class SessionsMixin:
                         t_str = time.strftime("%H:%M", time.localtime(float(item["timestamp"])))
                     except Exception:
                         t_str = ""
-                if not t_str:
-                    t_str = getattr(self, "_current_session_time_str", "") or ""
                 if t_str and not item.get("time"):
                     item["time"] = t_str
-                chat_scroll.mount(UserMessageCard(str(item.get("text", "")), turn_id=turn_id, time_str=t_str))
+                chat_scroll.mount(UserMessageCard(str(item.get("text", "")), turn_id=turn_id, time_str=t_str, timestamp=item.get("timestamp")))
                 continue
 
             if card is None:
