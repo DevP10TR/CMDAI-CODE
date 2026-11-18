@@ -63,7 +63,7 @@ def run_doctor() -> int:
     print(f"  [i] Default Model:         {def_mod} (L_ctx: {dyn_limit} tokens)")
 
     print("\n\x1b[1mAPI Providers Status:\x1b[0m")
-    keys = cfg.get("keys", {})
+    keys = cfg.get("api_keys", {}) or cfg.get("keys", {})
     providers_to_check = [
         ("opencode", "OpenCode Zen"),
         ("openai", "OpenAI"),

@@ -37,10 +37,13 @@ class SimpleGGUFLoader:
         self.requested_loader: Optional[str] = None
         self.current_n_ctx: int = 0
         self.current_use_mmproj: bool = False
+        self.current_flash_attn: Optional[bool] = None
+        self.current_kv_cache_type: Optional[str] = None
         self.last_load_info: Dict[str, Any] = {}
         self.last_load_warning: str = ""
         self._is_loaded = False
         self._proc: Optional[subprocess.Popen] = None
+        self._stderr_file: Optional[Any] = None
         self._lock = threading.Lock()
         self._stream_lock = threading.Lock()
 
@@ -67,11 +70,27 @@ class SimpleGGUFLoader:
             existing_pp = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = f"{src_dir}{os.pathsep}{existing_pp}" if existing_pp else src_dir
 
+            app_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+            log_dir = os.path.join(app_root, "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, "model_worker.log")
+            try:
+                if os.path.exists(log_path) and os.path.getsize(log_path) > 1024 * 1024:
+                    os.replace(log_path, log_path + ".1")
+            except Exception:
+                pass
+            stderr_target: Any = subprocess.DEVNULL
+            try:
+                self._stderr_file = open(log_path, "a", encoding="utf-8", errors="replace")
+                stderr_target = self._stderr_file
+            except Exception:
+                self._stderr_file = None
+
             self._proc = subprocess.Popen(
                 [sys.executable, worker_script],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=stderr_target,
                 text=True,
                 creationflags=flags,
                 env=env,
@@ -94,6 +113,8 @@ class SimpleGGUFLoader:
             self.current_loader = None
             self.requested_loader = None
             self.current_n_ctx = 0
+            self.current_flash_attn = None
+            self.current_kv_cache_type = None
             self.last_load_info = {}
             self.last_load_warning = ""
 
@@ -107,6 +128,12 @@ class SimpleGGUFLoader:
                 except Exception:
                     pass
                 self._proc = None
+            if self._stderr_file is not None:
+                try:
+                    self._stderr_file.close()
+                except Exception:
+                    pass
+                self._stderr_file = None
             self._is_loaded = False
 
     def list_models(self) -> List[Dict[str, Any]]:
@@ -135,7 +162,12 @@ class SimpleGGUFLoader:
     ) -> bool:
         with self._lock:
             from .settings import get_settings
-            loader = str(loader_type or get_settings().config.get("active_loader", "cpu") or "cpu").strip().lower()
+            cfg = get_settings().config
+            loader = str(loader_type or cfg.get("active_loader", "cpu") or "cpu").strip().lower()
+            flash_attn = bool(cfg.get("flash_attn", True))
+            kv_cache_type = str(cfg.get("kv_cache_type", "auto") or "auto").strip().lower()
+            if kv_cache_type not in ("auto", "f16", "q8_0", "q4_0"):
+                kv_cache_type = "auto"
 
             if (
                 self._is_loaded
@@ -143,6 +175,8 @@ class SimpleGGUFLoader:
                 and os.path.basename(self.current_model_path) == os.path.basename(model_filename)
                 and self.requested_loader == loader
                 and self.current_use_mmproj == bool(use_mmproj)
+                and self.current_flash_attn == flash_attn
+                and self.current_kv_cache_type == kv_cache_type
                 and self._proc is not None
                 and self._proc.poll() is None
             ):
@@ -164,6 +198,8 @@ class SimpleGGUFLoader:
                 "loader": loader,
                 "n_ctx": n_ctx or 8192,
                 "use_mmproj": bool(use_mmproj),
+                "flash_attn": flash_attn,
+                "kv_cache_type": kv_cache_type,
             }
             try:
                 self._proc.stdin.write(json.dumps(req) + "\n")
@@ -179,6 +215,8 @@ class SimpleGGUFLoader:
                     self.current_loader = res.get("loader") or loader
                     self.current_n_ctx = int(res.get("n_ctx") or req["n_ctx"])
                     self.current_use_mmproj = bool(use_mmproj)
+                    self.current_flash_attn = flash_attn
+                    self.current_kv_cache_type = kv_cache_type
                     self.last_load_info = res
                     self.last_load_warning = str(res.get("warning") or "")
                     return True
@@ -199,7 +237,12 @@ class SimpleGGUFLoader:
     ) -> Tuple[str, str]:
         with self._stream_lock:
             from .settings import get_settings
-            desired_loader = str(get_settings().config.get("active_loader", "cpu") or "cpu").strip().lower()
+            cfg = get_settings().config
+            desired_loader = str(cfg.get("active_loader", "cpu") or "cpu").strip().lower()
+            desired_flash = bool(cfg.get("flash_attn", True))
+            desired_kv = str(cfg.get("kv_cache_type", "auto") or "auto").strip().lower()
+            if desired_kv not in ("auto", "f16", "q8_0", "q4_0"):
+                desired_kv = "auto"
             model_changed = bool(
                 model_filename
                 and self.current_model_path
@@ -211,7 +254,9 @@ class SimpleGGUFLoader:
             )
             loader_changed = bool(self.requested_loader and self.requested_loader != desired_loader)
             mmproj_changed = bool(self.current_use_mmproj != needs_vision)
-            if not self._is_loaded or model_changed or loader_changed or mmproj_changed:
+            flash_changed = bool(self.current_flash_attn is not None and self.current_flash_attn != desired_flash)
+            kv_changed = bool(self.current_kv_cache_type is not None and self.current_kv_cache_type != desired_kv)
+            if not self._is_loaded or model_changed or loader_changed or mmproj_changed or flash_changed or kv_changed:
                 target = model_filename or self.current_model_path or "gemma-4-E4B-it-Q4_0.gguf"
                 ok = self.load_model(target, loader_type=desired_loader, use_mmproj=needs_vision)
                 if not ok:

@@ -52,12 +52,14 @@ class SessionTabItem(Horizontal):
             super().__init__()
             self.session_id = session_id
 
-    def __init__(self, session_id: str, title: str, is_active: bool = False, **kwargs):
+    def __init__(self, session_id: str, title: str, is_active: bool = False, is_running: bool = False, spinner_frame: str = "⌬", **kwargs):
         active_cls = "active" if is_active else "inactive"
         super().__init__(classes=f"session-tab-item {active_cls}", **kwargs)
         self.session_id = session_id
         self.title_text = title or "New session"
         self.is_active = is_active
+        self.tab_running = bool(is_running)
+        self.spinner_frame = spinner_frame or "⌬"
         self.is_hovered = False
         self._scroll_offset = 0
         self._pause_ticks = 0
@@ -65,17 +67,42 @@ class SessionTabItem(Horizontal):
 
     @property
     def visible_width(self) -> int:
-        if self.size.width > 4:
-            return max(6, self.size.width - 4)
-        return 18
+        reserve = 6 if self.tab_running else 4
+        if self.size.width > reserve:
+            return max(6, self.size.width - reserve)
+        return 16 if self.tab_running else 18
 
     def compose(self) -> ComposeResult:
+        from rich.text import Text
+        spin_cls = "tab-spinner" if self.tab_running else "tab-spinner hidden"
+        spin_txt = Text(f"{self.spinner_frame} ", style="bold #58a6ff") if self.tab_running else Text("")
+        yield Static(spin_txt, classes=spin_cls)
         w = self.visible_width
         display_title = self.title_text
         if len(display_title) > w:
             display_title = display_title[: max(4, w - 1)] + "…"
         yield Static(display_title, classes="tab-title")
         yield SessionTabCloseBtn(self.session_id)
+
+    def set_running(self, is_running: bool, frame: str = "⌬") -> None:
+        from rich.text import Text
+        changed = (self.tab_running != bool(is_running))
+        self.tab_running = bool(is_running)
+        self.spinner_frame = frame or "⌬"
+        try:
+            sp = self.query_one(".tab-spinner", Static)
+            if self.tab_running:
+                sp.remove_class("hidden")
+                sp.display = True
+                sp.update(Text(f"{self.spinner_frame} ", style="bold #58a6ff"))
+            else:
+                sp.add_class("hidden")
+                sp.display = False
+                sp.update("")
+        except Exception:
+            pass
+        if changed and not self.is_hovered:
+            self._update_static_title()
 
     def on_mount(self) -> None:
         self._update_static_title()
@@ -200,6 +227,16 @@ class SessionTabsBar(Horizontal):
         background: #161b22;
         color: #ffffff;
     }
+    .session-tab-item .tab-spinner {
+        width: 2;
+        height: 1;
+        padding: 0;
+        color: #58a6ff;
+        text-style: bold;
+    }
+    .session-tab-item .tab-spinner.hidden {
+        display: none;
+    }
     .session-tab-item .tab-title {
         width: 1fr;
         height: 1;
@@ -282,8 +319,17 @@ class SessionTabsBar(Horizontal):
             sid = str(s.get("session_id", ""))
             title = str(s.get("title", "") or "New session")
             is_active = (sid == self._active_id)
-            self.mount(SessionTabItem(session_id=sid, title=title, is_active=is_active))
+            is_running = bool(s.get("is_running", False))
+            self.mount(SessionTabItem(session_id=sid, title=title, is_active=is_active, is_running=is_running))
         self.mount(SessionNewTabBtn())
+
+    def update_running_states(self, running_ids: set, frame: str = "⌬") -> None:
+        try:
+            for child in self.children:
+                if isinstance(child, SessionTabItem):
+                    child.set_running(child.session_id in running_ids, frame=frame)
+        except Exception:
+            pass
 
     @on(SessionTabItem.Selected)
     def _on_tab_selected(self, msg: SessionTabItem.Selected) -> None:
@@ -360,7 +406,9 @@ class TimelineDot(Static):
         safe_prompt = escape(first_line)
         counter_text = f"{self.index} of {self.total}"
         if self.time_str:
-            content = f"[bold #e6edf3]{safe_prompt}[/]\n\n[dim #8b949e]{counter_text}[/]       [dim #8b949e]{self.time_str}[/]"
+            target_width = max(len(first_line), len(counter_text) + 2 + len(self.time_str))
+            pad = " " * max(2, target_width - len(counter_text) - len(self.time_str))
+            content = f"[bold #e6edf3]{safe_prompt}[/]\n\n[dim #8b949e]{counter_text}[/]{pad}[dim #8b949e]{self.time_str}[/]"
         else:
             content = f"[bold #e6edf3]{safe_prompt}[/]\n\n[dim #8b949e]{counter_text}[/]"
         self.tooltip = Text.from_markup(content)

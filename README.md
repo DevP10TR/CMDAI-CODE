@@ -17,7 +17,7 @@
 ## 🌟 About
 
 **CMDAI CODE** is an autonomous terminal coding agent running directly inside your Windows console (Windows Terminal & PowerShell). Built from the ground up for privacy, speed, and developer autonomy:
-- **Local-First**: Native support for quantized `.gguf` models via `llama.cpp` with Vulkan / CPU acceleration — write code completely offline without sending data to external servers.
+- **Local-First**: Native support for quantized `.gguf` models via `llama.cpp` with Vulkan / CPU acceleration — write code completely offline without sending data to external servers. Works best with **[LocalLLMAPI](https://github.com/DevP10TR/LocalLLMAPI)** for dedicated Vulkan/CUDA/CPU multi-slot local serving.
 - **Multi-Provider Cloud**: Seamless integration with top AI providers (OpenCode Zen, OpenRouter, Anthropic Claude, OpenAI, Google Gemini, Ollama, vLLM, and any custom OpenAI-compatible endpoints).
 - **Autonomous Subagents & Background Workers**: Delegate heavy tasks to specialized subagents (Code Reviewer, Tester, Refactor) running synchronously or in the background (`Ctrl+B` / `/bg`).
 - **Modern Terminal UI (TUI)**: Minimalist, clean GitHub Dark styled interface built on Textual — featuring real-time colored diffs, a session manager, and native Model Context Protocol (MCP) support.
@@ -26,7 +26,9 @@
 
 ## 🚀 Key Features
 
-- ⚡ **Local GGUF (Vulkan / CPU)**: Automatic discovery and loading of `.gguf` weights from the `models/` directory. Fast token generation without complex setup.
+- ⚡ **Local GGUF (Vulkan / CPU)**: Automatic discovery and loading of `.gguf` weights from the `models/` directory, with configurable Flash Attention and KV cache quantization (`auto`, `f16`, `q8_0`, `q4_0`) in `/settings`.
+- 🤗 **Hugging Face GGUF Installer (`/hf`, `/pull`)**: Search Hugging Face GGUF repositories directly from the terminal, check RAM fit, and download quantized weights into `models/` with live progress.
+- 🎙️ **Live Offline Voice Dictation (`● voice` / `F2`, `/voicemodel`)**: Real-time local Whisper speech-to-text (`faster-whisper`) with live audio-level visualization, 5s silence auto-stop, and optional API backends (Groq, OpenAI, OVH).
 - 🌐 **Custom AI Providers**: Built-in provider manager in `/models` (`Ctrl+A`) — easily connect any OpenAI-compatible API (Groq, Together AI, DeepInfra, self-hosted vLLM).
 - 🗂️ **Advanced Session Manager (`/sessions`)**: Persistent conversation history, automatic AI session titles, live filtering, and instant context switching.
 - ⚙️ **Background Jobs (`/bg`)**: Inspect running background tasks, track progress, and read logs in real time without blocking the terminal.
@@ -100,6 +102,8 @@ Once installed, use the global `cmdai` command from any directory:
 | Command | Description |
 | :--- | :--- |
 | `/models` | Select active local GGUF model or cloud provider |
+| `/hf` | Search and download `.gguf` models from Hugging Face (`/pull`, `/installmodels`) |
+| `/voicemodel` | Choose local offline Whisper or API voice dictation model & language |
 | `/sessions` | Browse and manage saved conversation sessions |
 | `/bg` | Monitor background processes and subagents |
 | `/mode` | Switch agent mode (`auto`, `code`, `plan`) |
@@ -115,6 +119,7 @@ Once installed, use the global `cmdai` command from any directory:
 - **`Ctrl+A`**: In `/models` – add new custom AI provider; in model list – add model
 - **`Ctrl+D`**: Configure API key for selected provider
 - **`Ctrl+B`**: Send current subagent task to background
+- **`F2`**: Start / stop live voice dictation (`● voice`)
 
 ---
 

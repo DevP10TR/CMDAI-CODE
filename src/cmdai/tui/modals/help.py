@@ -12,6 +12,8 @@ COMMANDS_DOC: Dict[str, str] = {
     "/help": "Browse commands by category — enter opens, enter runs",
     "/new": "Start a fresh conversation — previous stays saved in /sessions",
     "/models": "Open model picker and switch engines (Local + 33 API providers)",
+    "/hf": "Browse and download GGUF models from Hugging Face (/pull, /installmodels)",
+    "/voicemodel": "Select voice dictation model (Local offline Whisper or API)",
     "/modelinfo": "Details of the currently loaded model: arch, context, thinking support",
     "/mode": "Toggle/cycle agent execution mode (auto / plan / code)",
     "/thinking": "Show or set thinking level (/thinking low/medium/high/off)",
@@ -159,7 +161,7 @@ HELP_CATEGORIES: List[Tuple[str, List[str]]] = [
     ("Chat & Sessions", ["/new", "/help", "/sessions", "/summarize", "/stats"]),
     ("Code Agent & Git", ["/editor", "/git", "/diff", "/commit", "/todo", "/bg", "/mode"]),
     ("Context & Files", ["/cd", "/add", "/drop", "/ctx", "/memory"]),
-    ("Model & Reasoning", ["/models", "/modelinfo", "/params", "/system", "/thinking"]),
+    ("Model & Reasoning", ["/models", "/hf", "/voicemodel", "/modelinfo", "/params", "/system", "/thinking"]),
     ("Configuration & Engine", ["/settings", "/loader", "/update", "/updatesettings", "/changelog", "/mcp", "/custom", "/plugins", "/exit"]),
     ("Keyboard Shortcuts", list(SHORTCUTS_DOC.keys())),
 ]

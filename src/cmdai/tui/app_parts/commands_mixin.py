@@ -127,7 +127,7 @@ class CommandsMixin:
             self._hide_hints()
             cmd = prompt.split(maxsplit=1)[0].lower()
             modal_cmds = (
-                "/models", "/system", "/sessions", "/stats", "/modelinfo",
+                "/models", "/installmodels", "/pull", "/hf", "/voicemodel", "/system", "/sessions", "/stats", "/modelinfo",
                 "/settings", "/new", "/params", "/help", "/loader",
                 "/exit", "/tools", "/status",
                 "/diff", "/commit", "/todo", "/bg",
@@ -154,7 +154,7 @@ class CommandsMixin:
         try:
             chat_scroll = self.query_one("#chat-scroll", VerticalScroll)
             self._turn_counter += 1
-            user_msg = UserMessageCard(prompt, turn_id=self._turn_counter, time_str=now_str)
+            user_msg = UserMessageCard(prompt, turn_id=self._turn_counter, time_str=now_str, timestamp=now_ts)
             chat_scroll.mount(user_msg)
             chat_scroll.scroll_end(animate=False)
         except Exception:
@@ -174,7 +174,7 @@ class CommandsMixin:
                     timeout=4.0,
                 )
 
-        user_entry: Dict[str, Any] = {"role": "user", "content": prompt, "turn_id": self._turn_counter}
+        user_entry: Dict[str, Any] = {"role": "user", "content": prompt, "turn_id": self._turn_counter, "time": now_str, "timestamp": now_ts}
         if pending_imgs:
             user_entry["images"] = pending_imgs
         self.messages.append(user_entry)
@@ -221,6 +221,10 @@ class CommandsMixin:
             "/drop": self._cmd_drop,
             "/cd": self._cmd_cd,
             "/models": self._cmd_models,
+            "/installmodels": self._cmd_install_models,
+            "/pull": self._cmd_install_models,
+            "/hf": self._cmd_install_models,
+            "/voicemodel": self._cmd_voicemodel,
             "/modelinfo": self._cmd_modelinfo,
             "/tools": self._cmd_tools,
             "/status": self._cmd_status,
@@ -352,7 +356,7 @@ class CommandsMixin:
     def _on_help_command(self, cmd: Optional[str]) -> None:
         if not cmd:
             return
-        modal_cmds = ("/models", "/system", "/sessions", "/stats", "/modelinfo",
+        modal_cmds = ("/models", "/installmodels", "/pull", "/hf", "/voicemodel", "/system", "/sessions", "/stats", "/modelinfo",
                       "/new", "/params", "/help", "/loader", "/settings",
                       "/tools", "/status", "/diff", "/commit",
                       "/todo", "/bg", "/ctx", "/add", "/mode", "/thinking",
@@ -408,6 +412,70 @@ class CommandsMixin:
             ModelSelectModal(self.current_provider, self.current_model_id),
             self._on_model_selected,
         )
+
+    def _cmd_install_models(self, arg: str = "") -> None:
+        from ..modals.install_models import InstallModelsModal
+
+        def _on_installed(res: Optional[str]) -> None:
+            if not res:
+                return
+            if res == "__IMPORT_LOCAL__":
+                self._import_local_gguf_dialog()
+                return
+            fname = os.path.basename(res)
+            self._on_model_selected(("local_gguf", fname))
+            self.notify(f"Active local model: {fname}", title="Models", timeout=3.0)
+
+        self.push_screen(InstallModelsModal(initial_query=arg or ""), _on_installed)
+
+    def _import_local_gguf_dialog(self) -> None:
+        import shutil
+        import subprocess
+        from ...core.model_paths import resolve_models_dir
+
+        def _worker() -> None:
+            ps_cmd = (
+                "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; "
+                "$f = New-Object System.Windows.Forms.OpenFileDialog; "
+                "$f.Filter = 'GGUF Model Files (*.gguf)|*.gguf|All Files (*.*)|*.*'; "
+                "$f.Title = 'Import Local GGUF Model'; "
+                "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.FileName }"
+            )
+            try:
+                proc = subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", ps_cmd],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                src_path = (proc.stdout or "").strip()
+                if not src_path or not os.path.isfile(src_path):
+                    return
+                dest_dir = resolve_models_dir()
+                os.makedirs(dest_dir, exist_ok=True)
+                dest_path = os.path.join(dest_dir, os.path.basename(src_path))
+                if os.path.abspath(src_path) != os.path.abspath(dest_path):
+                    shutil.copy2(src_path, dest_path)
+                fname = os.path.basename(dest_path)
+                self.call_from_thread(self._on_model_selected, ("local_gguf", fname))
+                self.call_from_thread(self.notify, f"Imported local model: {fname}", title="Models", timeout=3.0)
+            except Exception as exc:
+                self.call_from_thread(self.notify, f"Import failed: {exc}", title="Models", severity="error", timeout=4.0)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _cmd_voicemodel(self, arg: str = "") -> None:
+        from ..modals.voice_model import VoiceModelModal
+
+        def _on_voice_selected(res: Any) -> None:
+            if isinstance(res, dict):
+                self.notify(
+                    f"Voice model: {res.get('provider')}:{res.get('model')} ({res.get('language')})",
+                    title="Voice",
+                    timeout=3.0,
+                )
+
+        self.push_screen(VoiceModelModal(), _on_voice_selected)
 
 
     def _cmd_sessions(self, arg: str = "") -> None:
@@ -1652,7 +1720,9 @@ class CommandsMixin:
         try:
             chat_scroll = self.query_one("#chat-scroll", VerticalScroll)
             self._turn_counter += 1
-            user_msg = UserMessageCard(f"!{cmd_line}", turn_id=self._turn_counter)
+            now_ts = time.time()
+            now_str = time.strftime("%H:%M", time.localtime(now_ts))
+            user_msg = UserMessageCard(f"!{cmd_line}", turn_id=self._turn_counter, time_str=now_str, timestamp=now_ts)
             chat_scroll.mount(user_msg)
             card = AssistantTurnCard("Terminal", turn_id=self._turn_counter)
             chat_scroll.mount(card)

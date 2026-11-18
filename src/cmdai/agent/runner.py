@@ -30,6 +30,8 @@ from .tools import (
     tool_write,
     tool_bugs,
     tool_code_search,
+    tool_git_status,
+    tool_git_diff,
 )
 
 
@@ -1558,6 +1560,25 @@ class AgentRunner:
                     self.on_tool_finish("code_search", query, res)
                 return res
 
+            elif name == "git_status":
+                if notify and self.on_tool_start:
+                    self.on_tool_start("git_status", "")
+                res = tool_git_status(ctx)
+                if notify and self.on_tool_finish:
+                    self.on_tool_finish("git_status", "", res)
+                return res
+
+            elif name == "git_diff":
+                path = args.get("path", "")
+                staged = str(args.get("staged", "")).lower() in ("true", "1", "yes")
+                target_label = f"{'--staged ' if staged else ''}{path}".strip()
+                if notify and self.on_tool_start:
+                    self.on_tool_start("git_diff", target_label)
+                res = tool_git_diff(ctx, path=path, staged=staged)
+                if notify and self.on_tool_finish:
+                    self.on_tool_finish("git_diff", target_label, res)
+                return res
+
             elif name == "screenshot":
                 if not (self.vision_capable and self.vision_capable()):
                     err_res = {
@@ -2043,10 +2064,25 @@ class AgentRunner:
                 lines.append(f"Found {res.get('count', 0)} symbol(s):")
                 for s in res.get("symbols", []):
                     lines.append(f"- {s.get('filepath')}:{s.get('start_line')} [{s.get('symbol_type')}] {s.get('signature')}")
-            elif "results" in res:
+            if res.get("references"):
+                lines.append(f"Found {len(res['references'])} reference(s):")
+                for ref in res["references"][:15]:
+                    lines.append(f"- {ref.get('filepath')}:{ref.get('line')}: {ref.get('text')}")
+            elif "results" in res and "symbols" not in res:
                 lines.append(f"Found {len(res['results'])} text match(es):")
                 for m in res["results"][:15]:
                     lines.append(f"- {m.get('file')}:{m.get('line')}: {m.get('content')}")
+        elif name == "git_status":
+            if res.get("success"):
+                lines.append(res.get("status") or "(clean working tree)")
+            else:
+                lines.append(f"git_status failed: {res.get('error', 'unknown')}")
+        elif name == "git_diff":
+            if res.get("success"):
+                diff_txt = res.get("diff", "")
+                lines.append(diff_txt if diff_txt.strip() else "(no diff)")
+            else:
+                lines.append(f"git_diff failed: {res.get('error', 'unknown')}")
         elif name == "screenshot":
             if res.get("path"):
                 lines.append(f"Screenshot saved: {res['path']} ({res.get('size_bytes', 0)} bytes)")
@@ -2164,11 +2200,12 @@ _PLAN_TOOLS_BLOCK = (
     "3. Find Files: <tool:glob pattern=\"*.*\" dir=\".\" />\n"
     "4. Text Search: <tool:search query=\"search_term\" path=\".\" />\n"
     "5. Symbol Search (AST/FTS5): <tool:code_search query=\"symbol_or_function\" />\n"
-    "6. Web Search: <tool:web query=\"docs or query or https://url\" />\n"
-    "7. Plan/Todo Tracker: <tool:todo action=\"set\" todos=\"step one|step two|step three\" /> - "
+    "6. Git Status / Diff (read-only): <tool:git_status /> and <tool:git_diff path=\"optional_file\" staged=\"false\" />\n"
+    "7. Web Search: <tool:web query=\"docs or query or https://url\" />\n"
+    "8. Plan/Todo Tracker: <tool:todo action=\"set\" todos=\"step one|step two|step three\" /> - "
     "that is how you record the plan. 'set' replaces the checklist, 'add' appends one "
     "step, 'done' marks a finished step.\n"
-    "8. Spawn Subagent: <tool:subagent name=\"Role\" system=\"instructions for the subagent\">the task it must do</tool:subagent>\n"
+    "9. Spawn Subagent: <tool:subagent name=\"Role\" system=\"instructions for the subagent\">the task it must do</tool:subagent>\n"
     "\n"
     "NOT AVAILABLE IN PLAN MODE: Write File, Edit File and Run Command. Calling them does "
     "not work - the app answers with an error and the step is wasted. Never call "
@@ -2213,6 +2250,7 @@ def _full_tools_block(vision: bool) -> str:
         "guess a name. In Code mode, file edits are reviewed in the live diff bar at the end of the turn.\n"
         "13. Spawn Subagent: <tool:subagent name=\"Role\" system=\"instructions for the subagent\">the task it must do</tool:subagent> (optional attribute background=\"true\" to run in background)\n"
         "14. Persistent Memory: <tool:memory action=\"add|list|remove|clear\" scope=\"project|global\" content=\"concise fact\" /> (saves cross-session facts/preferences)\n"
+        "15. Git Status / Diff (read-only): <tool:git_status /> and <tool:git_diff path=\"optional_file\" staged=\"false\" />\n"
         + (
             "15. Screenshot: <tool:screenshot target=\"active_window\" /> (captures an OS window title or 'active_window'/'desktop' to PNG; never pass a file path like index.html — open it in a browser window first)\n"
             "16. Vision: <tool:vision image_path=\"path.png\" question=\"what to check\" /> (attaches the image to your next request)\n"

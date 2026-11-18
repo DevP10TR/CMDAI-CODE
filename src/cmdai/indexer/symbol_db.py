@@ -125,6 +125,34 @@ class SymbolDB:
                 })
             return results
 
+    def get_file_symbols(self, filepath: str) -> List[Dict[str, Any]]:
+        """Return all indexed symbols for a given file path, ordered by start_line."""
+        norm = filepath.replace("\\", "/")
+        alt = filepath.replace("/", "\\")
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT name, filepath, symbol_type, start_line, end_line, signature, docstring, content
+                FROM symbols
+                WHERE filepath = ? OR filepath = ? OR filepath = ?
+                ORDER BY start_line ASC
+                """,
+                (filepath, norm, alt),
+            )
+            return [
+                {
+                    "name": r["name"],
+                    "filepath": r["filepath"],
+                    "symbol_type": r["symbol_type"],
+                    "start_line": r["start_line"],
+                    "end_line": r["end_line"],
+                    "signature": r["signature"],
+                    "docstring": r["docstring"],
+                    "content": r["content"],
+                }
+                for r in cursor.fetchall()
+            ]
+
     def get_stats(self) -> Dict[str, int]:
         with self._get_connection() as conn:
             file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]

@@ -9,6 +9,7 @@ Single source of truth for tool calling:
 import json
 import re
 from typing import Any, Dict, List, Optional
+from xml.sax.saxutils import escape as _xml_escape
 
 
 TOOL_DEFINITIONS: List[Dict[str, Any]] = [
@@ -175,6 +176,47 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "required": ["action"],
         },
     },
+    {
+        "name": "screenshot",
+        "description": "Capture a screenshot of the active window or screen for visual inspection.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "Capture target, e.g. 'active_window' or 'screen'"},
+            },
+        },
+    },
+    {
+        "name": "vision",
+        "description": "Analyze an image file or screenshot using the active vision-capable model.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_path": {"type": "string", "description": "Path to the image file"},
+                "question": {"type": "string", "description": "Question or instruction for analyzing the image"},
+            },
+            "required": ["image_path"],
+        },
+    },
+    {
+        "name": "git_status",
+        "description": "Show concise read-only git branch and working tree status without using shell.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "git_diff",
+        "description": "Show read-only git diff for unstaged or staged changes, optionally scoped to a file path.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Optional relative file or directory path"},
+                "staged": {"type": "boolean", "description": "Optional: set true to inspect staged (--cached) changes"},
+            },
+        },
+    },
 ]
 
 
@@ -193,43 +235,47 @@ def get_native_tool_schemas() -> List[Dict[str, Any]]:
     return schemas
 
 
+def _esc_attr(val: Any) -> str:
+    return _xml_escape(str(val or ""), {'"': "&quot;"})
+
+
 def format_tool_call_as_xml(tool_name: str, args: Dict[str, Any]) -> str:
     """Format tool call arguments into standard CMDAI XML tag for unified handling."""
     name = tool_name.lower().strip()
     if name == "write":
-        path = args.get("path", "")
+        path = _esc_attr(args.get("path", ""))
         content = args.get("content", "")
         return f'<tool:write path="{path}">{content}</tool:write>'
     elif name == "edit":
-        path = args.get("path", "")
-        old = args.get("old", "")
+        path = _esc_attr(args.get("path", ""))
+        old = _esc_attr(args.get("old", ""))
         new = args.get("new", "")
         return f'<tool:edit path="{path}" old="{old}">{new}</tool:edit>'
     elif name == "read":
-        path = args.get("path", "")
+        path = _esc_attr(args.get("path", ""))
         lines = args.get("lines")
         if lines:
-            return f'<tool:read path="{path}" lines="{lines}" />'
+            return f'<tool:read path="{path}" lines="{_esc_attr(lines)}" />'
         return f'<tool:read path="{path}" />'
     elif name == "command":
-        cmd = args.get("cmd") or args.get("command", "")
+        cmd = _esc_attr(args.get("cmd") or args.get("command", ""))
         bg = str(args.get("background", "")).lower() in ("true", "1", "yes")
         bg_attr = ' background="true"' if bg else ""
         return f'<tool:command cmd="{cmd}"{bg_attr} />'
     elif name == "todo":
         action = args.get("action", "add")
         if action == "set":
-            todos = args.get("todos", "")
+            todos = _esc_attr(args.get("todos", ""))
             return f'<tool:todo action="set" todos="{todos}" />'
         elif action == "done":
-            note = args.get("note", "")
+            note = _esc_attr(args.get("note", ""))
             return f'<tool:todo action="done" note="{note}" />'
         else:
-            note = args.get("note", "")
+            note = _esc_attr(args.get("note", ""))
             return f'<tool:todo action="add" note="{note}" />'
     elif name == "subagent":
-        s_name = args.get("name", "Worker")
-        system = args.get("system", "")
+        s_name = _esc_attr(args.get("name", "Worker"))
+        system = _esc_attr(args.get("system", ""))
         task = args.get("task", "")
         bg = str(args.get("background", "")).lower() in ("true", "1", "yes")
         bg_attr = ' background="true"' if bg else ""
@@ -238,6 +284,6 @@ def format_tool_call_as_xml(tool_name: str, args: Dict[str, Any]) -> str:
         return f'<tool:subagent name="{s_name}"{bg_attr}>{task}</tool:subagent>'
     else:
         # Generic attribute formatting
-        attr_strs = [f'{k}="{v}"' for k, v in args.items() if isinstance(v, (str, int, float, bool))]
+        attr_strs = [f'{k}="{_esc_attr(v)}"' for k, v in args.items() if isinstance(v, (str, int, float, bool))]
         attrs = " " + " ".join(attr_strs) if attr_strs else ""
         return f'<tool:{name}{attrs} />'

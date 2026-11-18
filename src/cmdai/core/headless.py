@@ -9,6 +9,7 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..agent.runner import AgentRunner, _strip_xml_tool_calls_clean, get_agent_system_prompt
+from ..agent.tool_specs import get_native_tool_schemas
 from ..agent.tools import AgentContext
 from .providers import stream_chat_completion
 from .sessions import SessionManager, clean_title_from_prompt
@@ -40,7 +41,7 @@ def run_headless(
     prov = provider or settings.config.get("default_provider", "local_gguf")
     mod = model or settings.config.get("default_model", "")
     api_key = settings.get_api_key(prov)
-    gen_params = settings.config.get("generation_params", {})
+    gen_params = settings.config.get("generation", {}) or settings.config.get("generation_params", {})
 
     sm = SessionManager()
     session_id = str(uuid.uuid4())[:8]
@@ -68,8 +69,16 @@ def run_headless(
 
     ctx = AgentContext(workdir=abs_workdir)
     ctx.mode = "auto"
-    runner = AgentRunner(ctx=ctx)
+    mcp_manager = None
+    try:
+        from ..mcp.client import MCPManager
+        mcp_manager = MCPManager()
+        mcp_manager.load_config()
+    except Exception:
+        mcp_manager = None
+    runner = AgentRunner(ctx=ctx, mcp_client=mcp_manager)
 
+    native_tools = get_native_tool_schemas()
     executed_tools: List[Dict[str, Any]] = []
     final_text = ""
     error_msg: Optional[str] = None
@@ -92,6 +101,7 @@ def run_headless(
             messages=msgs,
             api_key=api_key,
             generation_params=gen_params,
+            tools=native_tools,
         )
 
     try:

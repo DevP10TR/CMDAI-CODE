@@ -72,6 +72,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "custom_models": {},
     "installed_loaders": ["vulkan", "cpu"],
     "active_loader": "cpu",
+    "flash_attn": True,
+    "kv_cache_type": "auto",
+    "voice": {
+        "provider": "local",
+        "model": "small",
+        "language": "auto",
+    },
 }
 
 

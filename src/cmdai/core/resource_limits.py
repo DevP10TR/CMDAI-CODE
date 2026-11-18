@@ -326,13 +326,69 @@ def read_gguf_metadata(gguf_path: str) -> Dict[str, Any]:
     return result
 
 
-def estimate_kv_cache_bytes_per_token(meta: Dict[str, Any], dtype_bytes: int = 2) -> int:
+def resolve_effective_kv_cache_type(
+    meta: Optional[Dict[str, Any]] = None,
+    kv_cache_type: Optional[str] = None,
+    flash_attn: Optional[bool] = None,
+) -> str:
+    """Resolve 'auto' | 'f16' | 'q8_0' | 'q4_0' into a concrete KV cache dtype."""
+    if kv_cache_type is None or flash_attn is None:
+        try:
+            from .settings import get_settings
+            cfg = get_settings().config
+            if kv_cache_type is None:
+                kv_cache_type = str(cfg.get("kv_cache_type", "auto") or "auto")
+            if flash_attn is None:
+                flash_attn = bool(cfg.get("flash_attn", True))
+        except Exception:
+            kv_cache_type = kv_cache_type or "auto"
+            flash_attn = True if flash_attn is None else bool(flash_attn)
+
+    norm_kv = str(kv_cache_type or "auto").strip().lower()
+    if not flash_attn:
+        return "f16"
+    if norm_kv in ("f16", "q8_0", "q4_0"):
+        return norm_kv
+
+    # Auto-detect based on available RAM after loading model weights
+    m = meta or {}
+    train_ctx = int(m.get("n_ctx_train", 8192) or 8192)
+    target_ctx = min(32768, train_ctx)
+    model_size_gb = float(m.get("file_size_gb", 0.0) or 0.0)
+    try:
+        available_gb = psutil.virtual_memory().available / (1024**3)
+    except Exception:
+        return "f16"
+    cache_budget_bytes = max(0.5, available_gb - model_size_gb) * 0.70 * (1024**3)
+
+    for candidate, bpt in (("f16", 2.0), ("q8_0", 1.0), ("q4_0", 0.5)):
+        need_bytes = target_ctx * estimate_kv_cache_bytes_per_token(m, dtype_bytes=bpt)
+        if need_bytes <= cache_budget_bytes:
+            return candidate
+    return "q4_0"
+
+
+def _kv_cache_dtype_bytes(
+    kv_cache_type: Optional[str] = None,
+    flash_attn: Optional[bool] = None,
+    meta: Optional[Dict[str, Any]] = None,
+) -> float:
+    eff = resolve_effective_kv_cache_type(meta=meta, kv_cache_type=kv_cache_type, flash_attn=flash_attn)
+    if eff == "q8_0":
+        return 1.0
+    if eff == "q4_0":
+        return 0.5
+    return 2.0
+
+
+def estimate_kv_cache_bytes_per_token(meta: Dict[str, Any], dtype_bytes: Optional[float] = None) -> int:
+    bpt = float(dtype_bytes) if dtype_bytes is not None else _kv_cache_dtype_bytes()
     n_layer = meta.get("n_layer")
     n_head_kv = meta.get("n_head_kv")
     n_embd_head_k = meta.get("n_embd_head_k")
     if n_layer and n_head_kv and n_embd_head_k:
-        return 2 * int(n_layer) * int(n_head_kv) * int(n_embd_head_k) * int(dtype_bytes)
-    return 256 * 1024
+        return max(1, int(2 * int(n_layer) * int(n_head_kv) * int(n_embd_head_k) * bpt))
+    return max(1, int(256 * 1024 * (bpt / 2.0)))
 
 
 def estimate_model_memory(gguf_path: str, n_ctx: int = 4096) -> Dict[str, float]:
@@ -529,7 +585,8 @@ def resolve_context_limit(
 
         cache_budget_gb = ram_after_model * 0.70
 
-        bytes_per_token = estimate_kv_cache_bytes_per_token(meta)
+        bpt = _kv_cache_dtype_bytes(meta=meta)
+        bytes_per_token = estimate_kv_cache_bytes_per_token(meta, dtype_bytes=bpt)
         max_possible_tokens = int(cache_budget_gb * (1024**3) / bytes_per_token)
 
         dynamic_limit = max(2048, min(train_ctx, max_possible_tokens))
