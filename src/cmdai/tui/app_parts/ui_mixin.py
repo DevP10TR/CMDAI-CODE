@@ -582,17 +582,12 @@ class UIMixin:
             return
 
         turns = []
-        nudge_prefixes = (
-            "Kontynuuj na podstawie",
-            "Nie zatrzymuj się na samej",
-            "Wywołaj teraz subagenta",
-            "oraz przedstawić zwięzłe",
-        )
+        from ..widgets.helpers import is_internal_nudge_text
         if hasattr(self, "_transcript") and self._transcript:
             for item in self._transcript:
                 if isinstance(item, dict) and item.get("kind") == "user":
                     prompt = str(item.get("text", "") or "")
-                    if any(prompt.startswith(p) for p in nudge_prefixes):
+                    if item.get("internal") or is_internal_nudge_text(prompt):
                         continue
                     tid = int(item.get("turn_id", 0) or 0)
                     t_str = str(item.get("time") or "")
@@ -607,7 +602,7 @@ class UIMixin:
             for child in chat_scroll.children:
                 if isinstance(child, UserMessageCard) and not getattr(child, "_pruning", False):
                     prompt = str(getattr(child, "prompt", "") or "")
-                    if any(prompt.startswith(p) for p in nudge_prefixes):
+                    if is_internal_nudge_text(prompt):
                         continue
                     tid = int(getattr(child, "turn_id", 0) or 0)
                     t_str = str(getattr(child, "time_str", "") or "")

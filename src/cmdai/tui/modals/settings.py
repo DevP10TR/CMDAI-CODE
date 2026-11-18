@@ -48,6 +48,8 @@ class SettingsModal(ModalScreen[bool]):
         auto_copy = self.settings.config.get("settings", {}).get("auto_copy_selection", True)
         port = self.settings.config.get("server", {}).get("port", 8080)
         active_loader = self.settings.config.get("active_loader", "cpu")
+        flash_attn = self.settings.config.get("flash_attn", True)
+        kv_cache = str(self.settings.config.get("kv_cache_type", "auto") or "auto").lower()
 
         # No square brackets around ON/OFF: Textual parses those as markup and
         # silently drops them, so the value column rendered empty. The trailing
@@ -58,6 +60,8 @@ class SettingsModal(ModalScreen[bool]):
         ol.add_option(Option(f"  Auto-copy selection:     {on if auto_copy else off}"))
         ol.add_option(Option(f"  Background API Port:     {on}{port}"))
         ol.add_option(Option(f"  Active GGUF Loader:      {on}{active_loader}"))
+        ol.add_option(Option(f"  Flash Attention (GGUF):  {on if flash_attn else off}"))
+        ol.add_option(Option(f"  KV Cache Type (GGUF):    [b #3fb950]{kv_cache}[/]"))
         ol.add_option(Option("  Install Global Launcher: [b #58a6ff]Run[/] [dim]cmdai code installer[/dim]"))
         # OptionList ignores `enter` while `highlighted` is None, so no
         # OptionSelected is ever posted and the row cannot be changed. Default
@@ -93,6 +97,15 @@ class SettingsModal(ModalScreen[bool]):
             self.settings.config["active_loader"] = next_l
             self.settings.save_config()
         elif idx == 4:
+            self.settings.config["flash_attn"] = not bool(self.settings.config.get("flash_attn", True))
+            self.settings.save_config()
+        elif idx == 5:
+            kv_types = ["auto", "f16", "q8_0", "q4_0"]
+            curr_kv = str(self.settings.config.get("kv_cache_type", "auto") or "auto").lower()
+            next_kv = kv_types[(kv_types.index(curr_kv) + 1) % len(kv_types)] if curr_kv in kv_types else "auto"
+            self.settings.config["kv_cache_type"] = next_kv
+            self.settings.save_config()
+        elif idx == 6:
             install_global_launcher(silent=False)
 
         self.rebuild_options()

@@ -113,6 +113,8 @@ class ModelWorker:
         self.requested_loader = None
         self.current_n_ctx = 0
         self.current_mmproj = ""
+        self.current_flash_attn: Optional[bool] = None
+        self.current_kv_cache_type: Optional[str] = None
         self.abort_requested = False
         self.msg_queue = queue.Queue()
         self._listener_thread = None
@@ -130,7 +132,15 @@ class ModelWorker:
                 from model_paths import resolve_model_file
         return resolve_model_file(model_filename) or None
 
-    def load(self, model_filename: str, loader_type: str = "cpu", n_ctx: int = 2048, use_mmproj: bool = False) -> Dict[str, Any]:
+    def load(
+        self,
+        model_filename: str,
+        loader_type: str = "cpu",
+        n_ctx: int = 2048,
+        use_mmproj: bool = False,
+        flash_attn: bool = True,
+        kv_cache_type: str = "f16",
+    ) -> Dict[str, Any]:
         if not Llama:
             return {"status": "error", "error": "llama_cpp not installed"}
         path = self.find_model_path(model_filename)
@@ -140,11 +150,18 @@ class ModelWorker:
         mmproj_path = (find_matching_mmproj(path) or "") if use_mmproj else ""
         norm_loader = (loader_type or "cpu").strip().lower()
         target_ctx = int(n_ctx or 8192)
+        want_flash = bool(flash_attn)
+        norm_kv = str(kv_cache_type or "auto").strip().lower()
+        if norm_kv not in ("auto", "f16", "q8_0", "q4_0"):
+            norm_kv = "auto"
+
         if (
             self.llm is not None
             and self.current_model_path == path
             and self.requested_loader == norm_loader
             and self.current_mmproj == mmproj_path
+            and self.current_flash_attn == want_flash
+            and self.current_kv_cache_type == norm_kv
             and (self.current_n_ctx == target_ctx or not self.current_n_ctx)
         ):
             return {
@@ -155,6 +172,8 @@ class ModelWorker:
                 "loader": self.current_loader or norm_loader,
                 "requested_loader": norm_loader,
                 "mmproj": self.current_mmproj,
+                "flash_attn": self.current_flash_attn,
+                "kv_cache_type": self.current_kv_cache_type,
             }
 
         t0 = time.time()
@@ -176,6 +195,25 @@ class ModelWorker:
             effective_loader = "cpu"
             warning = f"Loader '{norm_loader}' is not supported by llama-cpp-python; using CPU."
 
+        effective_kv = norm_kv
+        if effective_kv == "auto":
+            try:
+                from .resource_limits import read_gguf_metadata, resolve_effective_kv_cache_type
+                meta = read_gguf_metadata(path)
+                effective_kv = resolve_effective_kv_cache_type(meta=meta, kv_cache_type="auto", flash_attn=want_flash)
+            except Exception:
+                effective_kv = "f16"
+        if not want_flash and effective_kv != "f16":
+            effective_kv = "f16"
+            kv_warn = "KV cache quantization requires Flash Attention; falling back to f16."
+            warning = f"{warning} {kv_warn}".strip() if warning else kv_warn
+
+        ggml_type_val: Optional[int] = None
+        if effective_kv == "q8_0":
+            ggml_type_val = getattr(llama_cpp, "GGML_TYPE_Q8_0", 8)
+        elif effective_kv == "q4_0":
+            ggml_type_val = getattr(llama_cpp, "GGML_TYPE_Q4_0", 2)
+
         chat_handler = _create_vision_chat_handler(path, mmproj_path) if mmproj_path else None
 
         def _create_llama(ctx_len: int, gpu_layers: int):
@@ -183,12 +221,19 @@ class ModelWorker:
                 "model_path": path,
                 "n_ctx": ctx_len,
                 "n_gpu_layers": gpu_layers,
-                "flash_attn": True,
+                "flash_attn": want_flash,
                 "verbose": False,
             }
+            if ggml_type_val is not None:
+                kwargs["type_k"] = ggml_type_val
+                kwargs["type_v"] = ggml_type_val
             if chat_handler is not None:
                 kwargs["chat_handler"] = chat_handler
             try:
+                return Llama(**kwargs), ctx_len
+            except TypeError:
+                kwargs.pop("type_k", None)
+                kwargs.pop("type_v", None)
                 return Llama(**kwargs), ctx_len
             except Exception:
                 if ctx_len > 8192:
@@ -208,6 +253,8 @@ class ModelWorker:
             self.requested_loader = norm_loader
             self.current_n_ctx = actual_ctx
             self.current_mmproj = mmproj_path if chat_handler is not None else ""
+            self.current_flash_attn = want_flash
+            self.current_kv_cache_type = effective_kv
             elapsed = time.time() - t0
             return {
                 "status": "ok",
@@ -218,6 +265,8 @@ class ModelWorker:
                 "n_gpu_layers": n_gpu,
                 "gpu_offload": gpu_offload,
                 "mmproj": self.current_mmproj,
+                "flash_attn": want_flash,
+                "kv_cache_type": effective_kv,
                 "warning": warning,
             }
         except Exception as e:
@@ -476,6 +525,8 @@ class ModelWorker:
                     loader_type=msg.get("loader", "cpu"),
                     n_ctx=msg.get("n_ctx", 8192),
                     use_mmproj=bool(msg.get("use_mmproj", False)),
+                    flash_attn=bool(msg.get("flash_attn", True)),
+                    kv_cache_type=str(msg.get("kv_cache_type", "f16") or "f16"),
                 )
                 sys.stdout.write(json.dumps(res) + "\n")
                 sys.stdout.flush()

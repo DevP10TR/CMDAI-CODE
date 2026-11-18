@@ -672,20 +672,124 @@ def tool_bugs(ctx: AgentContext) -> Dict[str, Any]:
 
 
 def tool_code_search(ctx: AgentContext, query: str) -> Dict[str, Any]:
+    q = (query or "").strip()
+    if not q:
+        return {"success": False, "error": "Empty query."}
+
+    candidate = q if os.path.isabs(q) else os.path.join(ctx.workdir, q)
+    if os.path.isfile(candidate):
+        try:
+            from .lsp_client import get_document_symbols
+            symbols = get_document_symbols(candidate, ctx.workdir)
+            return {
+                "success": True,
+                "query": q,
+                "mode": "document_symbols",
+                "symbols": symbols,
+                "count": len(symbols),
+            }
+        except Exception:
+            pass
+
+    symbols: List[Dict[str, Any]] = []
+    references: List[Dict[str, Any]] = []
     try:
         from ..indexer.ast_indexer import ProjectIndexer
         indexer = ProjectIndexer(ctx.workdir)
-        results = indexer.search(query, limit=20)
-        if results:
-            return {
-                "success": True,
-                "query": query,
-                "symbols": results,
-                "count": len(results),
-            }
+        symbols = indexer.search(q, limit=20)
     except Exception:
         pass
-    return tool_search(ctx, query)
+
+    try:
+        from .lsp_client import find_references
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", q):
+            references = find_references(q, ctx.workdir, limit=25)
+    except Exception:
+        pass
+
+    if symbols or references:
+        return {
+            "success": True,
+            "query": q,
+            "symbols": symbols,
+            "references": references,
+            "count": len(symbols) + len(references),
+        }
+    return tool_search(ctx, q)
+
+
+def _run_git_readonly(ctx: AgentContext, git_args: List[str], timeout: int = 10) -> Dict[str, Any]:
+    """Run a read-only git command in ctx.workdir without invoking a shell."""
+    safe_dir = os.path.abspath(ctx.workdir).replace("\\", "/")
+    try:
+        proc = subprocess.run(
+            ["git", "-c", f"safe.directory={safe_dir}", *git_args],
+            cwd=ctx.workdir,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        return {
+            "success": proc.returncode == 0,
+            "stdout": proc.stdout,
+            "stderr": proc.stderr.strip(),
+            "returncode": proc.returncode,
+        }
+    except FileNotFoundError:
+        return {"success": False, "stdout": "", "stderr": "git executable not found in PATH.", "returncode": -1}
+    except subprocess.TimeoutExpired:
+        return {"success": False, "stdout": "", "stderr": f"git command timed out after {timeout}s.", "returncode": -1}
+    except Exception as e:
+        return {"success": False, "stdout": "", "stderr": str(e), "returncode": -1}
+
+
+def tool_git_status(ctx: AgentContext) -> Dict[str, Any]:
+    """Return concise read-only git branch and working tree status."""
+    res = _run_git_readonly(ctx, ["status", "--short", "--branch"])
+    if not res["success"]:
+        return {"success": False, "error": res["stderr"] or "git status failed"}
+    output = res["stdout"].strip()
+    return {
+        "success": True,
+        "status": output,
+        "clean": len(output.splitlines()) <= 1,
+    }
+
+
+def tool_git_diff(ctx: AgentContext, path: str = "", staged: bool = False) -> Dict[str, Any]:
+    """Return read-only git diff (unstaged or staged, optionally scoped to a path)."""
+    args = ["diff"]
+    if staged:
+        args.append("--staged")
+    clean_path = (path or "").strip()
+    if clean_path:
+        try:
+            full_path = _safe_path(ctx, clean_path)
+            rel_path = os.path.relpath(full_path, ctx.workdir)
+            args.extend(["--", rel_path])
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+
+    res = _run_git_readonly(ctx, args)
+    if not res["success"]:
+        return {"success": False, "error": res["stderr"] or "git diff failed"}
+
+    diff_text = res["stdout"]
+    truncated = False
+    max_chars = 12000
+    if len(diff_text) > max_chars:
+        diff_text = diff_text[:max_chars] + "\n... [diff truncated]"
+        truncated = True
+    return {
+        "success": True,
+        "path": clean_path,
+        "staged": bool(staged),
+        "diff": diff_text,
+        "empty": not bool(diff_text.strip()),
+        "truncated": truncated,
+    }
 
 
 def tool_scratch(

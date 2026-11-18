@@ -900,13 +900,9 @@ class SessionsMixin:
             kind = item.get("kind")
 
             if kind == "user":
+                from ..widgets.helpers import is_internal_nudge_text
                 p_text = str(item.get("text", "") or "")
-                if any(p_text.startswith(p) for p in (
-                    "Kontynuuj na podstawie",
-                    "Nie zatrzymuj się na samej",
-                    "Wywołaj teraz subagenta",
-                    "oraz przedstawić zwięzłe",
-                )):
+                if item.get("internal") or is_internal_nudge_text(p_text):
                     continue
                 if card is not None and not getattr(card, "_replay_finished_done", False):
                     card.finish(getattr(card, "elapsed", None))

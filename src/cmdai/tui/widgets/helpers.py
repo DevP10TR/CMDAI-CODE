@@ -123,3 +123,20 @@ def build_diff_text_from_details(details: Dict[str, Any]) -> str:
         cmd = details.get("cmd") or target
         return f"$ {cmd}\n\n# Terminal shell command execution requested by agent.\n# Press Allow (y) to run or Reject (n) to skip."
     return "(Preview unavailable)"
+
+
+INTERNAL_NUDGE_PREFIXES = (
+    "Kontynuuj na podstawie",
+    "Nie zatrzymuj się na samej",
+    "Wywołaj teraz subagenta",
+    "oraz przedstawić zwięzłe",
+    "Zakończyłeś fazę myślenia",
+    "Narzędzia zostały już wykonane",
+    "W trybie PLAN musisz",
+)
+
+
+def is_internal_nudge_text(text: str) -> bool:
+    """Return True for internal worker nudges that should not appear as user timeline turns."""
+    s = str(text or "").lstrip()
+    return any(s.startswith(p) for p in INTERNAL_NUDGE_PREFIXES)
