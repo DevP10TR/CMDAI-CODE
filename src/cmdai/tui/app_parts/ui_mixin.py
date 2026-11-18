@@ -1821,7 +1821,7 @@ class UIMixin:
                     return
 
             bars = self._voice_wave_bars(lvl, step)
-            self._set_mic_label(f"[b #f85149]■[/] [#484f58]{bars}[/]")
+            self._set_mic_label(f"[b #f85149]■[/] [#8b949e]{bars}[/]")
             live = str(getattr(self, "_voice_live_text", "") or "")
             is_busy = bool(getattr(self, "_voice_live_busy", False))
             if live:
@@ -1841,7 +1841,7 @@ class UIMixin:
                 self._voice_dirty_audio = False
                 self._run_live_voice_snapshot()
         elif state == "transcribing":
-            self._set_mic_label("[b #f85149]■[/] [#484f58]▂▂▂▂[/]")
+            self._set_mic_label("[b #f85149]■[/] [#8b949e]▂▂▂▂[/]")
             live = str(getattr(self, "_voice_live_text", "") or "")
             if live:
                 self._set_voice_input_preview(f"{live} {spin}")
@@ -1934,7 +1934,7 @@ class UIMixin:
         kept = str(getattr(self, "_voice_live_text", "") or "")
         self._voice_state = "idle"
         self._voice_has_text = False
-        self._set_mic_label("[white]●[/] [#484f58]voice[/]")
+        self._set_mic_label("[#8b949e]● voice[/]")
         self._set_voice_input_preview(kept)
         self._voice_target_input = None
         self._voice_base_text = ""
@@ -1945,7 +1945,7 @@ class UIMixin:
         self._voice_req_id = getattr(self, "_voice_req_id", 0) + 1
         self._voice_state = "idle"
         self._voice_has_text = False
-        self._set_mic_label("[white]●[/] [#484f58]voice[/]")
+        self._set_mic_label("[#8b949e]● voice[/]")
         inp = getattr(self, "_voice_target_input", None) or self._active_voice_input()
         base = str(getattr(self, "_voice_base_text", "") or "")
         kept = str(getattr(self, "_voice_live_text", "") or "")
@@ -2001,7 +2001,7 @@ class UIMixin:
             self._voice_wave_step = 0
             self._voice_req_id = getattr(self, "_voice_req_id", 0) + 1
             self._voice_state = "recording"
-            self._set_mic_label("[b #f85149]■[/] [#484f58]▂▂▂▂[/]")
+            self._set_mic_label("[b #f85149]■[/] [#8b949e]▂▂▂▂[/]")
             self._set_voice_input_preview("Transcribing...")
             self._stop_voice_timer()
             self._voice_timer = self.set_interval(0.12, self._tick_voice_ui)
@@ -2018,7 +2018,7 @@ class UIMixin:
             kept = str(getattr(self, "_voice_live_text", "") or "")
             self._voice_state = "idle"
             self._voice_has_text = False
-            self._set_mic_label("[white]●[/] [dim]voice[/]")
+            self._set_mic_label("[#484f58]● voice[/]")
             self._set_voice_input_preview(kept)
             self._voice_live_text = ""
             return
@@ -2026,7 +2026,7 @@ class UIMixin:
         self._voice_state = "transcribing"
         self._voice_req_id = getattr(self, "_voice_req_id", 0) + 1
         req_id = self._voice_req_id
-        self._set_mic_label("[b #f85149]■[/] [#484f58]▂▂▂▂[/]")
+        self._set_mic_label("[b #f85149]■[/] [#8b949e]▂▂▂▂[/]")
         if not getattr(self, "_voice_has_text", False):
             self._set_voice_input_preview("Transcribing...")
         self._voice_timer = self.set_interval(0.12, self._tick_voice_ui)
@@ -2059,7 +2059,7 @@ class UIMixin:
             return
         self._stop_voice_timer()
         self._voice_state = "idle"
-        self._set_mic_label("[white]●[/] [#484f58]voice[/]")
+        self._set_mic_label("[#8b949e]● voice[/]")
 
         inp = getattr(self, "_voice_target_input", None) or self._active_voice_input()
         base = str(getattr(self, "_voice_base_text", "") or "")

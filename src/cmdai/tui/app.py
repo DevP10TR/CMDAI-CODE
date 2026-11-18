@@ -445,7 +445,7 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
                         yield Static("[dim #6e7681]·[/]", id="hero-meta-thinking-sep", classes="meta-sep")
                         yield Static("", id="hero-meta-thinking", classes="meta-clickable")
                         yield Static("", id="hero-meta-spacer")
-                        yield Static("[white]●[/] [#484f58]voice[/]", id="hero-meta-mic", classes="meta-clickable")
+                        yield Static("[#8b949e]● voice[/]", id="hero-meta-mic", classes="meta-clickable")
                         yield Static(" [dim #6e7681]·[/] ", classes="meta-sep")
                         rel_work = os.path.basename(self.workdir) or self.workdir
                         yield Static(f"[dim]{rel_work}[/dim]", id="hero-meta-right")
@@ -480,7 +480,7 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
                         yield Static("[dim #6e7681]·[/]", id="input-meta-thinking-sep", classes="meta-sep")
                         yield Static("", id="input-meta-thinking", classes="meta-clickable")
                         yield Static("", id="input-meta-spacer")
-                        yield Static("[white]●[/] [#484f58]voice[/]", id="input-meta-mic", classes="meta-clickable")
+                        yield Static("[#8b949e]● voice[/]", id="input-meta-mic", classes="meta-clickable")
                         yield Static(" [dim #6e7681]·[/] ", classes="meta-sep")
                         yield Static("", id="input-meta-right")
 

@@ -687,7 +687,7 @@ HintRow.selected, .cmd-hint.selected {
 
 #hero-meta-mic, #input-meta-mic {
     width: auto;
-    color: #484f58;
+    color: #8b949e;
     padding-right: 1;
 }
 
