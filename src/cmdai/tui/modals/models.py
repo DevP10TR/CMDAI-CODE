@@ -146,6 +146,7 @@ class ModelSelectModal(ModalScreen[Tuple[str, str]]):
         self.filtered_items: List[str] = []
         self._spinner_idx = 0
         self._spinner_timer = None
+        self._auto_refresh_timer = None
 
     # ------------------------------------------------------------- layout
 
@@ -162,6 +163,12 @@ class ModelSelectModal(ModalScreen[Tuple[str, str]]):
                 yield Static("", id="modal-footer-right")
 
     def on_mount(self) -> None:
+        prefetched = getattr(self.app, "_prefetched_provider_models", None)
+        prefetched_at = getattr(self.app, "_prefetched_at", None)
+        if isinstance(prefetched, dict):
+            self.provider_models.update(prefetched)
+        if isinstance(prefetched_at, dict):
+            self.fetched_at.update(prefetched_at)
         self.rebuild()
         self.query_one("#modal-list", OptionList).focus()
         self.refresh_all()
@@ -169,6 +176,12 @@ class ModelSelectModal(ModalScreen[Tuple[str, str]]):
         # one: 33 providers loading at once with the word "loading" on each of
         # them is a wall of text that says less than one moving dot per card.
         self._spinner_timer = self.set_interval(SPINNER_INTERVAL, self._tick_spinner)
+        self._auto_refresh_timer = self.set_interval(10.0, self._auto_refresh_local_providers)
+
+    def _auto_refresh_local_providers(self) -> None:
+        for pid in ("local_gguf", "localllmapi", "ollama"):
+            if pid in PROVIDERS_CATALOG and pid not in self.fetching_providers:
+                self.fetch_provider_models(pid, self.settings.get_api_key(pid), silent=True)
 
     def _render_provider_row(self, pid: str, pinfo: Any) -> Text:
         is_active = pid == self.current_provider
@@ -223,10 +236,11 @@ class ModelSelectModal(ModalScreen[Tuple[str, str]]):
         self.fetch_provider_models(pid, self.settings.get_api_key(pid))
 
     @work(thread=True)
-    def fetch_provider_models(self, pid: str, api_key: str) -> None:
-        self.fetching_providers.add(pid)
-        self.failed_providers.discard(pid)
-        self.app.call_from_thread(self.rebuild)
+    def fetch_provider_models(self, pid: str, api_key: str, silent: bool = False) -> None:
+        if not silent:
+            self.fetching_providers.add(pid)
+            self.failed_providers.discard(pid)
+            self.app.call_from_thread(self.rebuild)
 
         models = fetch_remote_models(pid, api_key)
 
@@ -241,12 +255,26 @@ class ModelSelectModal(ModalScreen[Tuple[str, str]]):
                     "thinking": has_reasoning(pid, cm) or False,
                 })
 
+        prev_ids = [str(m.get("id")) for m in self.provider_models.get(pid, [])]
+        new_ids = [str(m.get("id")) for m in models]
         self.provider_models[pid] = models
         self.fetched_at[pid] = time.time()
+        try:
+            app_cache = getattr(self.app, "_prefetched_provider_models", None)
+            if isinstance(app_cache, dict):
+                app_cache[pid] = models
+            app_stamps = getattr(self.app, "_prefetched_at", None)
+            if isinstance(app_stamps, dict):
+                app_stamps[pid] = self.fetched_at[pid]
+        except Exception:
+            pass
         if not models:
             self.failed_providers.add(pid)
+        else:
+            self.failed_providers.discard(pid)
         self.fetching_providers.discard(pid)
-        self.app.call_from_thread(self.rebuild)
+        if not silent or prev_ids != new_ids:
+            self.app.call_from_thread(self.rebuild)
 
     def refresh_catalog(self) -> None:
         """Pull models.dev again. Separate from the provider list on purpose.
@@ -480,6 +508,12 @@ class ModelListModal(ModalScreen[Optional[Tuple[str, str]]]):
         self.query_one("#modal-list", OptionList).focus()
         self.fetch()
         self._spinner_timer = self.set_interval(SPINNER_INTERVAL, self._tick_spinner)
+        if self.provider_id in ("local_gguf", "localllmapi", "ollama"):
+            self._auto_refresh_timer = self.set_interval(10.0, self._silent_refresh)
+
+    def _silent_refresh(self) -> None:
+        if not self.fetching:
+            self.fetch_models_from_thread()
 
     def _tick_spinner(self) -> None:
         if not self.fetching:

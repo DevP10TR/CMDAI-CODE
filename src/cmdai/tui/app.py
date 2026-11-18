@@ -274,6 +274,7 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
         Binding("ctrl+t", "cycle_thinking", "Thinking", show=True, priority=True),
         Binding("ctrl+shift+t", "toggle_tools", "Toggle Tools", show=False, priority=True),
         Binding("ctrl+b", "send_to_background", "Send to Background", show=False, priority=True),
+        Binding("f2", "toggle_voice_dictation", "Voice Dictation", show=False, priority=True),
     ]
 
     # An agent question blocks the worker thread that asked it, so it needs a
@@ -444,6 +445,8 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
                         yield Static("[dim #6e7681]·[/]", id="hero-meta-thinking-sep", classes="meta-sep")
                         yield Static("", id="hero-meta-thinking", classes="meta-clickable")
                         yield Static("", id="hero-meta-spacer")
+                        yield Static("[white]●[/] [#484f58]voice[/]", id="hero-meta-mic", classes="meta-clickable")
+                        yield Static(" [dim #6e7681]·[/] ", classes="meta-sep")
                         rel_work = os.path.basename(self.workdir) or self.workdir
                         yield Static(f"[dim]{rel_work}[/dim]", id="hero-meta-right")
             yield Static("", id="hero-version")
@@ -477,6 +480,8 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
                         yield Static("[dim #6e7681]·[/]", id="input-meta-thinking-sep", classes="meta-sep")
                         yield Static("", id="input-meta-thinking", classes="meta-clickable")
                         yield Static("", id="input-meta-spacer")
+                        yield Static("[white]●[/] [#484f58]voice[/]", id="input-meta-mic", classes="meta-clickable")
+                        yield Static(" [dim #6e7681]·[/] ", classes="meta-sep")
                         yield Static("", id="input-meta-right")
 
 
@@ -531,6 +536,7 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
         self._refresh_hero_version()
         self._refresh_hero_version_live()
         self._refresh_session_tabs()
+        self.set_timer(0.8, self._prefetch_models_background)
 
 
     def on_unmount(self) -> None:
@@ -578,6 +584,12 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
     @on(events.Click, "#hero-meta-thinking")
     def on_thinking_clicked(self, event: events.Click) -> None:
         super().on_thinking_clicked(event)
+
+    @on(events.Click, "#input-meta-mic")
+    @on(events.Click, "#hero-meta-mic")
+    def on_mic_clicked(self, event: events.Click) -> None:
+        event.stop()
+        self.action_toggle_voice_dictation()
 
     @on(events.Click, "#hero-view")
     @on(events.Click, "#hero-card")

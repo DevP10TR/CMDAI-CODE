@@ -685,6 +685,12 @@ HintRow.selected, .cmd-hint.selected {
     text-align: right;
 }
 
+#hero-meta-mic, #input-meta-mic {
+    width: auto;
+    color: #484f58;
+    padding-right: 1;
+}
+
 .meta-clickable {
     color: #8b949e;
 }

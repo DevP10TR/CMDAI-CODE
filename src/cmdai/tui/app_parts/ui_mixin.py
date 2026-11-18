@@ -1275,6 +1275,13 @@ class UIMixin:
 
 
     def action_handle_escape(self) -> None:
+        vstate = getattr(self, "_voice_state", "idle")
+        if vstate == "recording":
+            self._cancel_voice_recording()
+            return
+        if vstate == "transcribing":
+            self._cancel_voice_transcription()
+            return
         if len(self.screen_stack) > 1:
             top = self.screen_stack[-1]
             if hasattr(top, "action_dismiss_modal"):
@@ -1750,4 +1757,364 @@ class UIMixin:
         except Exception:
             pass
         self._handle_submit(cmd, from_hero=from_hero)
+
+    # ── Voice Dictation (◉ F2 -> ● 0:04 -> Transcribing...) ──────────────────
+
+    def _active_voice_input(self) -> Optional[AutoExpandingInput]:
+        inp_id = "#prompt-input" if getattr(self, "in_chat_mode", False) else "#hero-prompt-input"
+        try:
+            return self.query_one(inp_id, AutoExpandingInput)
+        except Exception:
+            return None
+
+    def _set_mic_label(self, markup: str) -> None:
+        for wid in ("#hero-meta-mic", "#input-meta-mic"):
+            try:
+                self.query_one(wid, Static).update(markup)
+            except Exception:
+                pass
+
+    def _stop_voice_timer(self) -> None:
+        timer = getattr(self, "_voice_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception:
+                pass
+            self._voice_timer = None
+
+    def _voice_wave_bars(self, level: float, step: int) -> str:
+        lvl = float(level or 0.0)
+        if lvl < 0.025:
+            return "▂▂▂▂"
+        glyphs = "▂▃▄▅▆▇█"
+        amp = min(1.0, (lvl - 0.015) * 1.25)
+        weights = (0.55, 1.0, 0.75, 0.45)
+        bars = []
+        for i in range(4):
+            phase = (step + i) % 4
+            w = weights[phase]
+            idx = min(len(glyphs) - 1, max(0, int(round(amp * w * (len(glyphs) - 1)))))
+            bars.append(glyphs[idx])
+        return "".join(bars)
+
+    def _tick_voice_ui(self) -> None:
+        state = getattr(self, "_voice_state", "idle")
+        step = int(getattr(self, "_voice_wave_step", 0))
+        self._voice_wave_step = step + 1
+        spin = ("⌬", "✻")[(step // 3) % 2]
+        if state == "recording":
+            rec = getattr(self, "_voice_recorder", None)
+            lvl = rec.current_level if rec else 0.0
+            now = time.time()
+            last_tick = float(getattr(self, "_voice_last_tick_ts", now))
+            dt = min(0.5, max(0.0, now - last_tick))
+            self._voice_last_tick_ts = now
+
+            if lvl >= 0.025:
+                self._voice_silence_elapsed = 0.0
+                self._voice_dirty_audio = True
+            elif not getattr(self, "_voice_live_busy", False):
+                self._voice_silence_elapsed = float(getattr(self, "_voice_silence_elapsed", 0.0)) + dt
+                if self._voice_silence_elapsed >= 5.0:
+                    self._auto_stop_voice_on_silence()
+                    return
+
+            bars = self._voice_wave_bars(lvl, step)
+            self._set_mic_label(f"[b #f85149]■[/] [#484f58]{bars}[/]")
+            live = str(getattr(self, "_voice_live_text", "") or "")
+            is_busy = bool(getattr(self, "_voice_live_busy", False))
+            if live:
+                self._set_voice_input_preview(f"{live} {spin}" if is_busy else live)
+            elif step % 3 == 0:
+                dots = ("...", ".", "..")[int(getattr(self, "_voice_dot_step", 0)) % 3]
+                self._voice_dot_step = getattr(self, "_voice_dot_step", 0) + 1
+                self._set_voice_input_preview(f"Transcribing{dots}")
+            last_done = float(getattr(self, "_voice_last_live_done_ts", 0.0))
+            if (
+                rec is not None
+                and rec.elapsed_seconds >= 1.2
+                and getattr(self, "_voice_dirty_audio", False)
+                and not getattr(self, "_voice_live_busy", False)
+                and (now - last_done) >= 1.6
+            ):
+                self._voice_dirty_audio = False
+                self._run_live_voice_snapshot()
+        elif state == "transcribing":
+            self._set_mic_label("[b #f85149]■[/] [#484f58]▂▂▂▂[/]")
+            live = str(getattr(self, "_voice_live_text", "") or "")
+            if live:
+                self._set_voice_input_preview(f"{live} {spin}")
+            elif step % 3 == 0:
+                dots = ("...", ".", "..")[int(getattr(self, "_voice_dot_step", 0)) % 3]
+                self._voice_dot_step = getattr(self, "_voice_dot_step", 0) + 1
+                self._set_voice_input_preview(f"Transcribing{dots}")
+
+    def _set_voice_input_preview(self, preview: str) -> None:
+        inp = getattr(self, "_voice_target_input", None) or self._active_voice_input()
+        if inp is None:
+            return
+        base = str(getattr(self, "_voice_base_text", "") or "")
+        sep = " " if base and not base.endswith((" ", "\n")) else ""
+        inp.text = f"{base}{sep}{preview}" if preview else base
+        try:
+            lines = inp.text.splitlines()
+            last_row = max(0, len(lines) - 1)
+            last_col = len(lines[-1]) if lines else 0
+            inp.cursor_location = (last_row, last_col)
+        except Exception:
+            pass
+        inp._update_auto_height()
+
+    def _run_live_voice_snapshot(self) -> None:
+        rec = getattr(self, "_voice_recorder", None)
+        if rec is None or not rec.is_recording:
+            return
+        self._voice_live_busy = True
+        req_id = getattr(self, "_voice_req_id", 0)
+
+        def _worker() -> None:
+            wav_path = ""
+            text = ""
+            try:
+                wav_path = rec.snapshot_wav()
+                if wav_path:
+                    from ...core.voice import transcribe_audio
+                    text = transcribe_audio(wav_path)
+            except Exception:
+                text = ""
+            finally:
+                try:
+                    if wav_path and os.path.exists(wav_path):
+                        os.remove(wav_path)
+                except Exception:
+                    pass
+                self._voice_last_live_done_ts = time.time()
+                self._voice_live_busy = False
+            if text:
+                try:
+                    self.call_from_thread(self._apply_live_voice_text, text, req_id)
+                except Exception:
+                    pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apply_live_voice_text(self, text: str, req_id: int) -> None:
+        if req_id != getattr(self, "_voice_req_id", 0):
+            return
+        if getattr(self, "_voice_state", "idle") not in ("recording", "transcribing"):
+            return
+        clean = text.strip()
+        if clean:
+            self._voice_has_text = True
+            self._voice_live_text = clean
+            self._set_voice_input_preview(clean)
+
+    def _auto_stop_voice_on_silence(self) -> None:
+        self._stop_voice_timer()
+        rec = getattr(self, "_voice_recorder", None)
+        if rec is not None:
+            try:
+                rec.cancel()
+            except Exception:
+                pass
+        req_id = getattr(self, "_voice_req_id", 0)
+        kept = str(getattr(self, "_voice_live_text", "") or "")
+        self._finish_voice_transcription(kept, "", req_id)
+
+    def _cancel_voice_recording(self) -> None:
+        self._stop_voice_timer()
+        self._voice_req_id = getattr(self, "_voice_req_id", 0) + 1
+        rec = getattr(self, "_voice_recorder", None)
+        if rec is not None:
+            try:
+                rec.cancel()
+            except Exception:
+                pass
+        kept = str(getattr(self, "_voice_live_text", "") or "")
+        self._voice_state = "idle"
+        self._voice_has_text = False
+        self._set_mic_label("[white]●[/] [#484f58]voice[/]")
+        self._set_voice_input_preview(kept)
+        self._voice_target_input = None
+        self._voice_base_text = ""
+        self._voice_live_text = ""
+
+    def _cancel_voice_transcription(self) -> None:
+        self._stop_voice_timer()
+        self._voice_req_id = getattr(self, "_voice_req_id", 0) + 1
+        self._voice_state = "idle"
+        self._voice_has_text = False
+        self._set_mic_label("[white]●[/] [#484f58]voice[/]")
+        inp = getattr(self, "_voice_target_input", None) or self._active_voice_input()
+        base = str(getattr(self, "_voice_base_text", "") or "")
+        kept = str(getattr(self, "_voice_live_text", "") or "")
+        self._voice_target_input = None
+        self._voice_base_text = ""
+        self._voice_live_text = ""
+        if inp is not None:
+            if kept:
+                sep = " " if base and not base.endswith((" ", "\n")) else ""
+                inp.text = f"{base}{sep}{kept}"
+            else:
+                inp.text = base
+            try:
+                lines = inp.text.splitlines()
+                last_row = max(0, len(lines) - 1)
+                last_col = len(lines[-1]) if lines else 0
+                inp.cursor_location = (last_row, last_col)
+            except Exception:
+                pass
+            inp._update_auto_height()
+            try:
+                self.set_focus(inp)
+            except Exception:
+                pass
+
+    def action_toggle_voice_dictation(self) -> None:
+        state = getattr(self, "_voice_state", "idle")
+        if state == "transcribing":
+            self._cancel_voice_transcription()
+            return
+
+        if not hasattr(self, "_voice_recorder") or self._voice_recorder is None:
+            from ...core.voice import VoiceRecorder
+            self._voice_recorder = VoiceRecorder()
+
+        if state == "idle":
+            try:
+                self._voice_recorder.start()
+            except Exception as exc:
+                self.notify(str(exc), title="Voice", severity="error", timeout=4.0)
+                return
+            inp = self._active_voice_input()
+            self._voice_target_input = inp
+            self._voice_base_text = inp.text if inp is not None else ""
+            self._voice_live_text = ""
+            self._voice_has_text = False
+            self._voice_live_busy = False
+            self._voice_dirty_audio = False
+            self._voice_last_live_done_ts = 0.0
+            self._voice_last_tick_ts = time.time()
+            self._voice_silence_elapsed = 0.0
+            self._voice_dot_step = 0
+            self._voice_wave_step = 0
+            self._voice_req_id = getattr(self, "_voice_req_id", 0) + 1
+            self._voice_state = "recording"
+            self._set_mic_label("[b #f85149]■[/] [#484f58]▂▂▂▂[/]")
+            self._set_voice_input_preview("Transcribing...")
+            self._stop_voice_timer()
+            self._voice_timer = self.set_interval(0.12, self._tick_voice_ui)
+            return
+
+        # Stop recording -> final transcription pass
+        self._stop_voice_timer()
+        try:
+            wav_path = self._voice_recorder.stop()
+        except Exception:
+            wav_path = ""
+
+        if not wav_path:
+            kept = str(getattr(self, "_voice_live_text", "") or "")
+            self._voice_state = "idle"
+            self._voice_has_text = False
+            self._set_mic_label("[white]●[/] [dim]voice[/]")
+            self._set_voice_input_preview(kept)
+            self._voice_live_text = ""
+            return
+
+        self._voice_state = "transcribing"
+        self._voice_req_id = getattr(self, "_voice_req_id", 0) + 1
+        req_id = self._voice_req_id
+        self._set_mic_label("[b #f85149]■[/] [#484f58]▂▂▂▂[/]")
+        if not getattr(self, "_voice_has_text", False):
+            self._set_voice_input_preview("Transcribing...")
+        self._voice_timer = self.set_interval(0.12, self._tick_voice_ui)
+        self._run_voice_transcription(wav_path, req_id)
+
+    def _run_voice_transcription(self, wav_path: str, req_id: int) -> None:
+        def _worker() -> None:
+            text = ""
+            err = ""
+            try:
+                from ...core.voice import transcribe_audio
+                text = transcribe_audio(wav_path)
+            except Exception as exc:
+                err = str(exc)
+            finally:
+                try:
+                    if wav_path and os.path.exists(wav_path):
+                        os.remove(wav_path)
+                except Exception:
+                    pass
+            try:
+                self.call_from_thread(self._finish_voice_transcription, text, err, req_id)
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _finish_voice_transcription(self, text: str, err: str, req_id: int) -> None:
+        if req_id != getattr(self, "_voice_req_id", 0):
+            return
+        self._stop_voice_timer()
+        self._voice_state = "idle"
+        self._set_mic_label("[white]●[/] [#484f58]voice[/]")
+
+        inp = getattr(self, "_voice_target_input", None) or self._active_voice_input()
+        base = str(getattr(self, "_voice_base_text", "") or "")
+        final_text = text.strip() if text and text.strip() else str(getattr(self, "_voice_live_text", "") or "")
+        self._voice_target_input = None
+        self._voice_base_text = ""
+        self._voice_live_text = ""
+
+        if inp is not None:
+            if final_text:
+                sep = " " if base and not base.endswith((" ", "\n")) else ""
+                inp.text = f"{base}{sep}{final_text}"
+                try:
+                    lines = inp.text.splitlines()
+                    last_row = max(0, len(lines) - 1)
+                    last_col = len(lines[-1]) if lines else 0
+                    inp.cursor_location = (last_row, last_col)
+                except Exception:
+                    pass
+            else:
+                inp.text = base
+            inp._update_auto_height()
+            try:
+                self.set_focus(inp)
+            except Exception:
+                pass
+
+        if err:
+            self.notify(err, title="Voice", severity="error", timeout=5.0)
+        elif not final_text:
+            self.notify("No speech detected.", title="Voice", timeout=2.5)
+
+    # ── Background Model Pre-fetch ───────────────────────────────────────────
+
+    def _prefetch_models_background(self) -> None:
+        def _worker() -> None:
+            try:
+                from ...core.providers import KEYLESS, PROVIDERS_CATALOG, fetch_remote_models
+                custom_provs = self.settings.get_custom_providers()
+                cache: Dict[str, List[Dict[str, Any]]] = getattr(self, "_prefetched_provider_models", None) or {}
+                stamps: Dict[str, float] = getattr(self, "_prefetched_at", None) or {}
+                for pid in PROVIDERS_CATALOG:
+                    key = self.settings.get_api_key(pid)
+                    if key or pid in KEYLESS or pid in ("localllmapi", "opencode") or pid in custom_provs:
+                        try:
+                            models = fetch_remote_models(pid, key)
+                            if models:
+                                cache[pid] = models
+                                stamps[pid] = time.time()
+                        except Exception:
+                            pass
+                self._prefetched_provider_models = cache
+                self._prefetched_at = stamps
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
 
