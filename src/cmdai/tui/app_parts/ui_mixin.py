@@ -1983,6 +1983,15 @@ class UIMixin:
             self._voice_recorder = VoiceRecorder()
 
         if state == "idle":
+            from ...core.voice import VoiceRecorder, is_voice_model_ready
+            ready, reason = is_voice_model_ready()
+            if not ready:
+                self.notify(reason, title="Voice", severity="warning", timeout=4.0)
+                if hasattr(self, "_cmd_voicemodel"):
+                    self._cmd_voicemodel()
+                return
+            if not hasattr(self, "_voice_recorder") or self._voice_recorder is None:
+                self._voice_recorder = VoiceRecorder()
             try:
                 self._voice_recorder.start()
             except Exception as exc:

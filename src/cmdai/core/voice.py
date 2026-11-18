@@ -153,6 +153,67 @@ class VoiceRecorder:
                 pass
 
 
+def _whisper_search_roots() -> List[str]:
+    roots: List[str] = []
+    try:
+        from .model_paths import resolve_models_dir
+        roots.append(os.path.join(resolve_models_dir(), "whisper"))
+    except Exception:
+        pass
+    roots.append(os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"))
+    return roots
+
+
+def is_local_whisper_installed(model_id: str) -> bool:
+    """Return True if a local faster-whisper model is already downloaded on disk."""
+    mid = str(model_id or "").strip().lower()
+    if not mid:
+        return False
+    suffix = f"faster-whisper-{mid}"
+    for root in _whisper_search_roots():
+        if not os.path.isdir(root):
+            continue
+        direct = os.path.join(root, mid)
+        if os.path.isfile(os.path.join(direct, "model.bin")):
+            return True
+        try:
+            for entry in os.listdir(root):
+                low = entry.lower()
+                if not (low.endswith(suffix) or low == mid):
+                    continue
+                snap_dir = os.path.join(root, entry, "snapshots")
+                if os.path.isdir(snap_dir):
+                    for snap in os.listdir(snap_dir):
+                        if os.path.isfile(os.path.join(snap_dir, snap, "model.bin")):
+                            return True
+        except Exception:
+            continue
+    return False
+
+
+def is_voice_model_ready() -> tuple[bool, str]:
+    """Check whether the currently configured voice model is installed / has an API key."""
+    from .settings import get_settings
+    settings = get_settings()
+    vcfg = settings.config.get("voice", {}) if isinstance(settings.config.get("voice"), dict) else {}
+    prov = str(vcfg.get("provider", "local") or "local").strip().lower()
+    mod = str(vcfg.get("model", "small") or "small").strip()
+
+    if prov == "local":
+        if is_local_whisper_installed(mod):
+            return True, ""
+        return False, f"Voice model '{mod}' is not installed yet — select and install a model in /voicemodel."
+
+    if settings.get_api_key(prov):
+        return True, ""
+    return False, f"Missing API key for '{prov}' — configure it in /voicemodel."
+
+
+def install_local_whisper_model(model_id: str) -> None:
+    """Download and initialize a local faster-whisper model into models/whisper/."""
+    _get_local_whisper(model_id)
+
+
 def _get_local_whisper(model_id: str) -> Any:
     try:
         from faster_whisper import WhisperModel
