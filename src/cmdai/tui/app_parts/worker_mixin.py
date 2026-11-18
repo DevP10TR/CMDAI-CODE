@@ -700,7 +700,7 @@ class WorkerMixin:
                 accumulated = "".join(step_chunks)
 
                 if worker_agent_mode == "plan" and re.search(
-                    r"<(?:tool:(?:write|edit|command)\b|tool_call[^>]*\b(?:write|edit|command)\b)",
+                    r"<(?:tool:(?:write|edit|multi_edit|command)\b|tool_call[^>]*\b(?:write|edit|multi_edit|command)\b)",
                     accumulated,
                     re.IGNORECASE,
                 ):
@@ -1933,6 +1933,44 @@ class WorkerMixin:
                             # spawning/running a subagent so the lead model receives its result first.
                             break
                         else:
+                            _PARALLEL_RO = frozenset({"read", "ls", "glob", "search", "code_search", "git_status", "git_diff"})
+                            if tool_name in _PARALLEL_RO:
+                                ro_batch: List[Tuple[str, Dict[str, Any]]] = []
+                                j = idx
+                                while j < len(remaining_segments) and remaining_segments[j][0] == "tool":
+                                    r_name, r_args = remaining_segments[j][1]
+                                    if r_name not in _PARALLEL_RO:
+                                        break
+                                    r_sig = f"{r_name}:{json.dumps(r_args, sort_keys=True, default=str)}"
+                                    if tool_call_counts.get(r_sig, 0) >= 1:
+                                        break
+                                    ro_batch.append((r_name, r_args))
+                                    j += 1
+                                if len(ro_batch) > 1:
+                                    from concurrent.futures import ThreadPoolExecutor
+                                    for r_name, r_args in ro_batch:
+                                        r_sig = f"{r_name}:{json.dumps(r_args, sort_keys=True, default=str)}"
+                                        tool_call_counts[r_sig] = tool_call_counts.get(r_sig, 0) + 1
+
+                                    def _exec_ro(pair: Tuple[str, Dict[str, Any]]) -> Tuple[str, Dict[str, Any], str]:
+                                        rn, ra = pair
+                                        try:
+                                            rr = self.agent_runner.execute_tool(rn, ra)
+                                            fb = self.agent_runner.format_tool_result_for_llm(rn, rr)
+                                        except Exception as t_exc:
+                                            rr = {"success": False, "error": f"Tool execution exception: {t_exc}"}
+                                            fb = f'<tool_response name="{rn}">ERROR: {t_exc}</tool_response>'
+                                        return rn, rr, fb
+
+                                    with ThreadPoolExecutor(max_workers=min(4, len(ro_batch))) as pool:
+                                        ro_results = list(pool.map(_exec_ro, ro_batch))
+                                    for _rn, rr, fb in ro_results:
+                                        last_tool_failed[0] = bool(rr.get("error") or rr.get("success") is False)
+                                        _add_message({"role": "user", "content": fb})
+                                    self.call_from_thread(self.refresh)
+                                    idx += len(ro_batch)
+                                    continue
+
                             call_sig = f"{tool_name}:{json.dumps(args, sort_keys=True, default=str)}"
                             tool_call_counts[call_sig] = tool_call_counts.get(call_sig, 0) + 1
                             if tool_call_counts[call_sig] >= 2:

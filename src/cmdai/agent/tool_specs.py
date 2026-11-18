@@ -51,6 +51,29 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "multi_edit",
+        "description": "Atomically apply multiple {old, new} edits to a single file in one step.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Relative path to the file to modify"},
+                "edits": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old": {"type": "string"},
+                            "new": {"type": "string"},
+                        },
+                        "required": ["old", "new"],
+                    },
+                    "description": "Ordered list of {old, new} replacements",
+                },
+            },
+            "required": ["path", "edits"],
+        },
+    },
+    {
         "name": "ls",
         "description": "List directory contents including files and subdirectories.",
         "parameters": {
@@ -220,7 +243,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
 ]
 
 
-_PLAN_DISABLED_TOOLS = frozenset({"write", "edit", "command"})
+_PLAN_DISABLED_TOOLS = frozenset({"write", "edit", "multi_edit", "command"})
 
 
 def get_native_tool_schemas(mode: str = "auto") -> List[Dict[str, Any]]:
@@ -257,6 +280,10 @@ def format_tool_call_as_xml(tool_name: str, args: Dict[str, Any]) -> str:
         old = _esc_attr(args.get("old", ""))
         new = args.get("new", "")
         return f'<tool:edit path="{path}" old="{old}">{new}</tool:edit>'
+    elif name == "multi_edit":
+        path = _esc_attr(args.get("path", ""))
+        edits_json = json.dumps(args.get("edits") or [], ensure_ascii=False)
+        return f'<tool:multi_edit path="{path}">{edits_json}</tool:multi_edit>'
     elif name == "read":
         path = _esc_attr(args.get("path", ""))
         lines = args.get("lines")

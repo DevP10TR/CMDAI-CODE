@@ -127,6 +127,31 @@ def _smart_replace(content: str, old: str, new: str) -> Optional[Tuple[str, int,
             replaced = ("\r\n" if use_crlf else "\n").join(replaced_lines)
             return replaced, i + 1, matched_old
 
+    # Stage 5: Whitespace-collapsed line match (tolerates internal spacing differences)
+    old_collapsed = [" ".join(ln.split()) for ln in old_lines]
+    if any(old_collapsed):
+        matches: List[Tuple[int, List[str]]] = []
+        for i in range(len(content_lines) - n_old + 1):
+            window = content_lines[i : i + n_old]
+            if [" ".join(ln.split()) for ln in window] == old_collapsed:
+                matches.append((i, window))
+        if len(matches) == 1:
+            i, window = matches[0]
+            first_non_empty_win = next((ln for ln in window if ln.strip()), "")
+            indent_prefix = first_non_empty_win[: len(first_non_empty_win) - len(first_non_empty_win.lstrip(" \t"))]
+            new_base_indent = _min_indent(new_lines)
+            adjusted_new = []
+            for nl in new_lines:
+                if not nl.strip():
+                    adjusted_new.append("")
+                else:
+                    rel = nl[new_base_indent:] if len(nl) >= new_base_indent else nl.lstrip(" \t")
+                    adjusted_new.append(indent_prefix + rel)
+            matched_old = "\n".join(window)
+            replaced_lines = content_lines[:i] + adjusted_new + content_lines[i + n_old :]
+            replaced = ("\r\n" if use_crlf else "\n").join(replaced_lines)
+            return replaced, i + 1, matched_old
+
     return None
 
 
@@ -188,6 +213,99 @@ def tool_read(ctx: AgentContext, path: str, lines: Optional[str] = None) -> Dict
         return {"success": False, "error": str(e)}
 
 
+def _build_diff_entries(
+    old_lines: List[str],
+    start_line_num: int,
+    matched_old: str,
+    new: str,
+) -> List[Tuple[int, str, str]]:
+    old_chunk_lines = matched_old.splitlines()
+    new_chunk_lines = new.splitlines()
+    diff_entries: List[Tuple[int, str, str]] = []
+
+    ctx_before_start = max(1, start_line_num - 2)
+    for i in range(ctx_before_start, start_line_num):
+        if i <= len(old_lines):
+            diff_entries.append((i, "ctx", old_lines[i - 1]))
+
+    for idx, line in enumerate(old_chunk_lines):
+        diff_entries.append((start_line_num + idx, "del", line))
+
+    for idx, line in enumerate(new_chunk_lines):
+        diff_entries.append((start_line_num + idx, "add", line))
+
+    after_start = start_line_num + len(old_chunk_lines)
+    ctx_after_end = min(len(old_lines), after_start + 2)
+    for i in range(after_start, ctx_after_end + 1):
+        if i <= len(old_lines):
+            diff_entries.append((i, "ctx", old_lines[i - 1]))
+
+    return diff_entries
+
+
+def _finalize_file_edit(
+    ctx: AgentContext,
+    full_path: str,
+    prev_content: str,
+    new_content: str,
+    diff_entries: List[Tuple[int, str, str]],
+) -> Dict[str, Any]:
+    if getattr(ctx, "on_before_file_modify", None):
+        try:
+            ctx.on_before_file_modify(full_path)
+        except Exception:
+            pass
+
+    with open(full_path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+
+    is_valid, verify_err = verify_code_syntax(full_path, new_content)
+    if not is_valid:
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(prev_content)
+        return {
+            "success": False,
+            "error": f"Syntax verification failed: {verify_err}",
+            "path": ctx.rel_path(full_path),
+            "verification": "FAILED",
+            "verification_error": verify_err,
+        }
+
+    test_res = run_project_tests(ctx.workdir, target_file=full_path)
+    test_status = ""
+    if test_res.get("has_tests"):
+        if test_res["passed"]:
+            test_status = f"[AUTO-TEST: PASSED] {test_res.get('summary', '')}"
+        else:
+            test_status = (
+                f"⚠️ [AUTO-TEST: FAILURE DETECTED]\n"
+                f"Runner: {test_res.get('runner', 'tests')}\n"
+                f"{test_res.get('output', '')}\n\n"
+                "CRITICAL AUTONOMOUS REPAIR DIRECTIVE: The code edit caused test failures above. "
+                "Analyze the error output, locate the bug, and immediately use <tool:edit> or <tool:write> to repair the code until tests pass!"
+            )
+
+    res_dict: Dict[str, Any] = {
+        "success": True,
+        "path": ctx.rel_path(full_path),
+        "diff_entries": diff_entries,
+        "verification": "OK",
+        "verification_error": "",
+        "test_result": test_res,
+    }
+    try:
+        from .lsp_client import run_file_diagnostics, format_diagnostics_summary
+        diags = run_file_diagnostics(full_path, ctx.workdir)
+        if diags:
+            res_dict["diagnostics"] = format_diagnostics_summary(diags)
+    except Exception:
+        pass
+
+    if test_status:
+        res_dict["test_status"] = test_status
+    return res_dict
+
+
 def tool_edit(
     ctx: AgentContext, path: str, old: str, new: str
 ) -> Dict[str, Any]:
@@ -207,84 +325,47 @@ def tool_edit(
             }
 
         new_content, start_line_num, matched_old = match_res
+        diff_entries = _build_diff_entries(content.splitlines(), start_line_num, matched_old, new)
+        return _finalize_file_edit(ctx, full_path, content, new_content, diff_entries)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
-        if getattr(ctx, "on_before_file_modify", None):
-            try:
-                ctx.on_before_file_modify(full_path)
-            except Exception:
-                pass
 
-        old_lines = content.splitlines()
-        old_chunk_lines = matched_old.splitlines()
-        new_chunk_lines = new.splitlines()
+def tool_multi_edit(
+    ctx: AgentContext, path: str, edits: List[Dict[str, str]]
+) -> Dict[str, Any]:
+    """Atomically apply multiple {old, new} edits to a single file."""
+    full_path = ctx.resolve_path(path)
+    if not os.path.exists(full_path):
+        return {"success": False, "error": f"File not found: {path}"}
+    if not isinstance(edits, list) or not edits:
+        return {"success": False, "error": "multi_edit requires a non-empty list of {old, new} edits."}
 
-        diff_entries: List[Tuple[int, str, str]] = []
+    try:
+        with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+            orig_content = f.read()
 
-        ctx_before_start = max(1, start_line_num - 2)
-        for i in range(ctx_before_start, start_line_num):
-            if i <= len(old_lines):
-                diff_entries.append((i, "ctx", old_lines[i - 1]))
+        working = orig_content
+        all_diffs: List[Tuple[int, str, str]] = []
+        for idx, item in enumerate(edits, start=1):
+            if not isinstance(item, dict):
+                return {"success": False, "error": f"Edit #{idx} must be an object with 'old' and 'new'."}
+            old_str = str(item.get("old") or "")
+            new_str = str(item.get("new") or "")
+            match_res = _smart_replace(working, old_str, new_str)
+            if match_res is None:
+                return {
+                    "success": False,
+                    "error": f"Edit #{idx} in multi_edit did not match '{path}'. No changes were written.",
+                }
+            next_working, start_line_num, matched_old = match_res
+            all_diffs.extend(_build_diff_entries(working.splitlines(), start_line_num, matched_old, new_str))
+            working = next_working
 
-        for idx, line in enumerate(old_chunk_lines):
-            diff_entries.append((start_line_num + idx, "del", line))
-
-        for idx, line in enumerate(new_chunk_lines):
-            diff_entries.append((start_line_num + idx, "add", line))
-
-        after_start = start_line_num + len(old_chunk_lines)
-        ctx_after_end = min(len(old_lines), after_start + 2)
-        for i in range(after_start, ctx_after_end + 1):
-            if i <= len(old_lines):
-                diff_entries.append((i, "ctx", old_lines[i - 1]))
-
-        with open(full_path, "w", encoding="utf-8") as f:
-            f.write(new_content)
-
-        is_valid, verify_err = verify_code_syntax(full_path, new_content)
-        if not is_valid:
-            with open(full_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            return {
-                "success": False,
-                "error": f"Syntax verification failed: {verify_err}",
-                "path": ctx.rel_path(full_path),
-                "verification": "FAILED",
-                "verification_error": verify_err,
-            }
-
-        test_res = run_project_tests(ctx.workdir, target_file=full_path)
-        test_status = ""
-        if test_res.get("has_tests"):
-            if test_res["passed"]:
-                test_status = f"[AUTO-TEST: PASSED] {test_res.get('summary', '')}"
-            else:
-                test_status = (
-                    f"⚠️ [AUTO-TEST: FAILURE DETECTED]\n"
-                    f"Runner: {test_res.get('runner', 'tests')}\n"
-                    f"{test_res.get('output', '')}\n\n"
-                    "CRITICAL AUTONOMOUS REPAIR DIRECTIVE: The code edit caused test failures above. "
-                    "Analyze the error output, locate the bug, and immediately use <tool:edit> or <tool:write> to repair the code until tests pass!"
-                )
-
-        res_dict = {
-            "success": True,
-            "path": ctx.rel_path(full_path),
-            "diff_entries": diff_entries,
-            "verification": "OK",
-            "verification_error": "",
-            "test_result": test_res,
-        }
-        try:
-            from .lsp_client import run_file_diagnostics, format_diagnostics_summary
-            diags = run_file_diagnostics(full_path, ctx.workdir)
-            if diags:
-                res_dict["diagnostics"] = format_diagnostics_summary(diags)
-        except Exception:
-            pass
-
-        if test_status:
-            res_dict["test_status"] = test_status
-        return res_dict
+        res = _finalize_file_edit(ctx, full_path, orig_content, working, all_diffs)
+        if res.get("success"):
+            res["edits_applied"] = len(edits)
+        return res
     except Exception as e:
         return {"success": False, "error": str(e)}
 

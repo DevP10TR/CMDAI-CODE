@@ -18,6 +18,7 @@ from .tools import (
     AgentContext,
     tool_command,
     tool_edit,
+    tool_multi_edit,
     tool_glob,
     tool_ls,
     tool_memory,
@@ -1100,7 +1101,7 @@ class AgentRunner:
         ctx = ctx if ctx is not None else self.ctx
 
         mode = getattr(ctx, "mode", "auto")
-        if mode == "plan" and name in ("write", "edit", "command"):
+        if mode == "plan" and name in ("write", "edit", "multi_edit", "command"):
             return {
                 "success": False,
                 "error": (
@@ -1286,6 +1287,28 @@ class AgentRunner:
                         pass
                 if notify and self.on_tool_finish:
                     self.on_tool_finish("edit", path, res)
+                return res
+
+            elif name in ("multi_edit", "multiedit"):
+                path = args.get("path") or args.get("file") or args.get("filepath") or args.get("file_path") or ""
+                raw_edits = args.get("edits") if args.get("edits") is not None else args.get("content", "")
+                if isinstance(raw_edits, str):
+                    try:
+                        raw_edits = json.loads(raw_edits)
+                    except Exception:
+                        raw_edits = []
+                if not path:
+                    err_res = {"success": False, "error": "missing required attribute 'path'"}
+                    if notify and self.on_tool_start:
+                        self.on_tool_start("multi_edit", "")
+                    if notify and self.on_tool_finish:
+                        self.on_tool_finish("multi_edit", "", err_res)
+                    return err_res
+                if notify and self.on_tool_start:
+                    self.on_tool_start("multi_edit", path)
+                res = tool_multi_edit(ctx, path, raw_edits if isinstance(raw_edits, list) else [])
+                if notify and self.on_tool_finish:
+                    self.on_tool_finish("multi_edit", path, res)
                 return res
 
             elif name == "write":
@@ -2007,7 +2030,7 @@ class AgentRunner:
             lines.append(f"File: {res.get('path')}")
             lines.append(f"Total lines: {res.get('total_lines')}")
             lines.append(f"```\n{res.get('content', '')}\n```")
-        elif name in ("edit", "write"):
+        elif name in ("edit", "multi_edit", "write"):
             lines.append(f"Successfully modified: {res.get('path')}")
             if "lines" in res:
                 lines.append(f"Total lines written: {res['lines']}")
@@ -2230,7 +2253,7 @@ def _full_tools_block(vision: bool) -> str:
         "AVAILABLE TOOLS:\n"
         "1. Write File: <tool:write path=\"relative/path.ext\">file content here</tool:write>\n"
         "2. Read File: <tool:read path=\"relative/path.ext\" lines=\"1-100\" />\n"
-        "3. Edit File: <tool:edit path=\"file.ext\" old=\"exact old snippet\">new replacement snippet</tool:edit>\n"
+        "3. Edit File: <tool:edit path=\"file.ext\" old=\"exact old snippet\">new replacement snippet</tool:edit> (or <tool:multi_edit path=\"file.ext\">[{\"old\":\"...\",\"new\":\"...\"}]</tool:multi_edit> for multiple edits)\n"
         "4. List Directory: <tool:ls path=\".\" />\n"
         "5. Find Files: <tool:glob pattern=\"*.*\" dir=\".\" />\n"
         "6. Text Search: <tool:search query=\"search_term\" path=\".\" />\n"
