@@ -220,10 +220,16 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
 ]
 
 
-def get_native_tool_schemas() -> List[Dict[str, Any]]:
+_PLAN_DISABLED_TOOLS = frozenset({"write", "edit", "command"})
+
+
+def get_native_tool_schemas(mode: str = "auto") -> List[Dict[str, Any]]:
     """Return list of standard JSON Schema tool objects formatted for OpenAI/OpenRouter/Anthropic API calls."""
+    is_plan = str(mode or "auto").strip().lower() == "plan"
     schemas = []
     for tool in TOOL_DEFINITIONS:
+        if is_plan and tool.get("name") in _PLAN_DISABLED_TOOLS:
+            continue
         schemas.append({
             "type": "function",
             "function": {

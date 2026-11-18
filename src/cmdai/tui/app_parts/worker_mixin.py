@@ -674,6 +674,7 @@ class WorkerMixin:
             self._live_step_thinking = step_thinking
             last_token_render = [0.0]
             step_tool_completed = [False]
+            plan_forbidden_aborted = [False]
             step_usage: Dict[str, Any] = {}
             first_token_time = [0.0]
             last_token_time = [0.0]
@@ -697,6 +698,15 @@ class WorkerMixin:
                     return
                 step_chunks.append(chunk)
                 accumulated = "".join(step_chunks)
+
+                if worker_agent_mode == "plan" and re.search(
+                    r"<(?:tool:(?:write|edit|command)\b|tool_call[^>]*\b(?:write|edit|command)\b)",
+                    accumulated,
+                    re.IGNORECASE,
+                ):
+                    plan_forbidden_aborted[0] = True
+                    step_tool_completed[0] = True
+                    return
 
                 if is_stream_tool_or_turn_complete(accumulated):
                     step_tool_completed[0] = True
@@ -945,6 +955,15 @@ class WorkerMixin:
                 else:
                     payload_messages.append(wm)
             self._attach_pending_images(payload_messages)
+            if worker_agent_mode == "plan":
+                payload_messages.append({
+                    "role": "system",
+                    "content": (
+                        "[PLAN MODE — READ ONLY] write, edit, and command are DISABLED in Plan mode. "
+                        "Do NOT call them. Use only read/ls/glob/search/code_search/git_status/git_diff/web/todo/subagent, "
+                        "and output your plan to the user."
+                    ),
+                })
 
             if is_worker_aborted():
                 break
@@ -965,7 +984,7 @@ class WorkerMixin:
                 else:
                     from ...agent.tool_specs import get_native_tool_schemas
                     native_tools = (
-                        get_native_tool_schemas()
+                        get_native_tool_schemas(mode=worker_agent_mode)
                         if worker_provider not in ("local_gguf", "localllmapi")
                         else None
                     )
@@ -1026,6 +1045,20 @@ class WorkerMixin:
                 break
 
             _call_card("finish_thinking")
+
+            if plan_forbidden_aborted[0]:
+                _clear_live_step_state()
+                _call_card("clear_generating_tool")
+                _add_message({
+                    "role": "user",
+                    "content": (
+                        "PLAN MODE ACTIVE: 'write', 'edit', and 'command' are disabled in Plan mode — "
+                        "do NOT call them. Record your checklist with <tool:todo action=\"set\" ... /> "
+                        "(if not already set) and present the plan to the user without modifying files."
+                    ),
+                })
+                _prepare_next_turn()
+                continue
 
             step_text = "".join(step_chunks) or resp or ""
             s_low = step_text.lower().strip()

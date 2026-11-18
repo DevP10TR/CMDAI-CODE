@@ -133,6 +133,7 @@ INTERNAL_NUDGE_PREFIXES = (
     "Zakończyłeś fazę myślenia",
     "Narzędzia zostały już wykonane",
     "W trybie PLAN musisz",
+    "PLAN MODE ACTIVE:",
 )
 
 

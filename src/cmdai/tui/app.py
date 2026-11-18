@@ -482,7 +482,8 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
                         yield Static("", id="input-meta-spacer")
                         yield Static("[#8b949e]● voice[/]", id="input-meta-mic", classes="meta-clickable")
                         yield Static(" [dim #6e7681]·[/] ", classes="meta-sep")
-                        yield Static("", id="input-meta-right")
+                        rel_work_chat = os.path.basename(self.workdir) or self.workdir
+                        yield Static(f"[dim]{rel_work_chat}[/dim]", id="input-meta-right")
 
 
     def on_mount(self) -> None:

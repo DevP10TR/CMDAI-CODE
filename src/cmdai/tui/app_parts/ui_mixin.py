@@ -311,8 +311,9 @@ class UIMixin:
                 cancel_w.styles.display = "block"
                 cancel_w.update("[dim]esc: cancel[/dim]")
             else:
-                cancel_w.styles.display = "none"
-                cancel_w.update("")
+                rel_work = os.path.basename(self.workdir) or self.workdir
+                cancel_w.styles.display = "block"
+                cancel_w.update(f"[dim]{rel_work}[/dim]")
         except Exception:
             pass
 
