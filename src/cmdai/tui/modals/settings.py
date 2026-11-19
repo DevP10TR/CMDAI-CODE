@@ -46,6 +46,7 @@ class SettingsModal(ModalScreen[bool]):
 
         conf_exit = self.settings.config.get("settings", {}).get("confirm_exit", False)
         auto_copy = self.settings.config.get("settings", {}).get("auto_copy_selection", True)
+        use_keyring = self.settings.config.get("settings", {}).get("use_system_keyring", False)
         port = self.settings.config.get("server", {}).get("port", 8080)
         active_loader = self.settings.config.get("active_loader", "cpu")
         flash_attn = self.settings.config.get("flash_attn", True)
@@ -58,6 +59,7 @@ class SettingsModal(ModalScreen[bool]):
         off = "[dim]OFF[/] "
         ol.add_option(Option(f"  Confirm Exit:            {on if conf_exit else off}"))
         ol.add_option(Option(f"  Auto-copy selection:     {on if auto_copy else off}"))
+        ol.add_option(Option(f"  API Keyring (Win Creds): {on if use_keyring else off}"))
         ol.add_option(Option(f"  Background API Port:     {on}{port}"))
         ol.add_option(Option(f"  Active GGUF Loader:      {on}{active_loader}"))
         ol.add_option(Option(f"  Flash Attention (GGUF):  {on if flash_attn else off}"))
@@ -85,27 +87,42 @@ class SettingsModal(ModalScreen[bool]):
             settings_dict["auto_copy_selection"] = not settings_dict.get("auto_copy_selection", True)
             self.settings.save_config()
         elif idx == 2:
+            want_on = not bool(settings_dict.get("use_system_keyring", False))
+            if want_on:
+                try:
+                    import keyring  # noqa: F401
+                except ImportError:
+                    self.app.notify(
+                        "Package 'keyring' is not installed. Run: pip install keyring",
+                        title="API Keyring",
+                        severity="warning",
+                        timeout=4.0,
+                    )
+                    return
+            settings_dict["use_system_keyring"] = want_on
+            self.settings.save_config()
+        elif idx == 3:
             ports = [8080, 11434, 8000, 5000]
             curr = self.settings.config.setdefault("server", {}).get("port", 8080)
             next_p = ports[(ports.index(curr) + 1) % len(ports)] if curr in ports else 8080
             self.settings.config["server"]["port"] = next_p
             self.settings.save_config()
-        elif idx == 3:
+        elif idx == 4:
             loaders = ["cpu", "vulkan", "cuda"]
             curr = self.settings.config.get("active_loader", "cpu")
             next_l = loaders[(loaders.index(curr) + 1) % len(loaders)] if curr in loaders else "cpu"
             self.settings.config["active_loader"] = next_l
             self.settings.save_config()
-        elif idx == 4:
+        elif idx == 5:
             self.settings.config["flash_attn"] = not bool(self.settings.config.get("flash_attn", True))
             self.settings.save_config()
-        elif idx == 5:
+        elif idx == 6:
             kv_types = ["auto", "f16", "q8_0", "q4_0"]
             curr_kv = str(self.settings.config.get("kv_cache_type", "auto") or "auto").lower()
             next_kv = kv_types[(kv_types.index(curr_kv) + 1) % len(kv_types)] if curr_kv in kv_types else "auto"
             self.settings.config["kv_cache_type"] = next_kv
             self.settings.save_config()
-        elif idx == 6:
+        elif idx == 7:
             install_global_launcher(silent=False)
 
         self.rebuild_options()

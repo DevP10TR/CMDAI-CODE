@@ -364,6 +364,10 @@ def main():
     if args.command in ("update", "code-update") or "code update" in args_joined:
         sys.exit(handle_update())
 
+    if args.command == "doctor" or (args.command == "code" and str(args.path or "").lower() == "doctor") or "code doctor" in args_joined:
+        from cmdai.core.doctor import run_doctor
+        sys.exit(run_doctor())
+
     if args.command in ("addlocal", "add-model", "code-addlocal") or "code addlocal" in args_joined:
         sys.exit(handle_add_local_model())
 
@@ -404,30 +408,52 @@ def main():
  ╚██████╗██║ ╚═╝ ██║██████╔╝██║  ██║██║  ╚██████╗╚██████╔╝██████╔╝███████╗
   ╚═════╝╚═╝     ╚═╝╚═════╝ ╚═╝  ╚═╝╚═╝   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝\x1b[0m
 
-\x1b[1mUsage:\x1b[0m
-  cmdai code [dir]                 Launch the CMDAI CODE terminal assistant
-  cmdai code help                  Show full CLI help without starting TUI
-  cmdai mcp [command]              Manage MCP servers (list, add, remove, test)
-  cmdai update                     Update from the GitHub repository
-  cmdai addlocal                   Add a local GGUF model
-  cmdai editor [file]              Built-in code editor
-  cmdai map [dir]                  Interactive AST Mind Map & dependency graph
-  cmdai --install-launcher         Install global Windows PATH launcher
+  \x1b[1;36m⌬  CMDAI CODE\x1b[0m \x1b[90m· Autonomous Terminal Coding Agent · Local GGUF · Cloud · Voice\x1b[0m
+  \x1b[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m
 
-\x1b[1mHeadless CLI Mode (no TUI):\x1b[0m
-  cmdai -p "find bugs in auth.py"             Run a single prompt and exit
-  cmdai -p "continue" --continue              Continue latest session in workdir
-  git diff | cmdai -p "review changes"        Read context from stdin pipe
-  cmdai -p "analyze" --output-format json     Emit structured JSON output
+  \x1b[1;97mUsage\x1b[0m
+  \x1b[90m────────────────────────────────────────────────────────────────\x1b[0m
+    \x1b[36mcmdai code [dir]\x1b[0m               Launch CMDAI CODE in the workspace
+    \x1b[36mcmdai code help\x1b[0m                Show this CLI help without starting TUI
+    \x1b[36mcmdai code doctor\x1b[0m              Run system, GPU, voice & API provider diagnostics
+    \x1b[36mcmdai code editor [file]\x1b[0m       Open the built-in terminal code editor
+    \x1b[36mcmdai code map [dir]\x1b[0m           Interactive AST Mind Map & dependency graph
+    \x1b[36mcmdai code mcp <cmd>\x1b[0m           Manage MCP servers (list, add, remove, test)
+    \x1b[36mcmdai code addlocal\x1b[0m            Import a local .gguf model
+    \x1b[36mcmdai code update\x1b[0m              Pull latest updates & sync dependencies
+    \x1b[36mcmdai --install-launcher\x1b[0m       Install global Windows PATH launcher
 
-\x1b[1mOptions:\x1b[0m
-  --workdir <path>                 Project working directory
-  --provider <name>                LLM provider ID
-  --model <name>                   Model name or ID
-  -p, --prompt <text>              Headless mode (run prompt without TUI and exit)
-  --continue                       Continue the latest session
-  --output-format <fmt>            Headless output format: text or json
-  -h, --help                       Show help message
+  \x1b[1;97mHeadless CLI Mode (no TUI)\x1b[0m
+  \x1b[90m────────────────────────────────────────────────────────────────\x1b[0m
+    cmdai -p "find bugs in auth.py"           Run a single prompt and exit
+    cmdai -p "continue" --continue            Continue latest session in workdir
+    git diff | cmdai -p "review changes"      Read context from stdin pipe
+    cmdai -p "analyze" --output-format json   Emit structured JSON output
+
+  \x1b[1;97mOptions\x1b[0m
+  \x1b[90m────────────────────────────────────────────────────────────────\x1b[0m
+    --workdir <path>               Project working directory (default: current)
+    --provider <id>                LLM provider ID (e.g. local_gguf, localllmapi, openrouter)
+    --model <id>                   Model filename or provider model ID
+    -p, --prompt <text>            Headless mode (run prompt without TUI)
+    --continue                     Continue the latest session
+    --output-format <fmt>          Headless output format: text | json
+    -h, --help                     Show this help message
+
+  \x1b[1;97mIn-App Slash Commands\x1b[0m
+  \x1b[90m────────────────────────────────────────────────────────────────\x1b[0m
+    \x1b[36m/models, /hf, /pull\x1b[0m            Switch models or download .gguf from Hugging Face
+    \x1b[36m/voicemodel\x1b[0m                    Configure offline Whisper or API voice dictation (F2)
+    \x1b[36m/mode, /thinking, /params\x1b[0m      Switch auto/plan/code, reasoning level & gen params
+    \x1b[36m/sessions, /new, /branch\x1b[0m       Manage, switch, or branch conversation sessions
+    \x1b[36m/git, /diff, /commit, /revert\x1b[0m  Inspect git diffs, commit, or revert checkpoints
+    \x1b[36m/plan, /todo, /bg\x1b[0m              Manage task checklists & background subagents (Ctrl+B)
+    \x1b[36m/ctx, /add, /drop, /memory\x1b[0m     Manage pinned context files & persistent memory
+    \x1b[36m/editor, /map, /mcp, /plugins\x1b[0m  Built-in editor, AST map, MCP servers & plugins
+    \x1b[36m/settings, /update, /help\x1b[0m      App settings (Flash Attn, KV cache, Keyring) & help
+
+  \x1b[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m
+  \x1b[90mhttps://github.com/DevP10TR/CMDAI-CODE\x1b[0m
 """)
         return
 

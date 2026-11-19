@@ -67,6 +67,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "confirm_exit": False,
         "auto_copy_selection": True,
         "enable_thinking_animation": True,
+        "use_system_keyring": False,
     },
     "api_keys": {},
     "custom_models": {},
@@ -151,20 +152,78 @@ class SettingsManager:
         except Exception:
             return False
 
-    def get_api_key(self, provider_id: str) -> str:
-        env_names = [
-            f"{provider_id.upper()}_API_KEY",
-            f"{provider_id.upper()}_KEY",
-        ]
-        for name in env_names:
+    _KEYRING_SERVICE = "CMDAI_CODE"
+    _PROVIDER_ENV_ALIASES: Dict[str, tuple[str, ...]] = {
+        "gemini": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+        "huggingface": ("HF_TOKEN", "HUGGINGFACE_API_KEY", "HUGGINGFACEHUB_API_TOKEN"),
+        "ovh": ("OVH_AI_ENDPOINTS_ACCESS_TOKEN", "OVH_API_KEY"),
+    }
+
+    def _env_names_for_provider(self, provider_id: str) -> List[str]:
+        pid = str(provider_id or "").strip().lower()
+        names = list(self._PROVIDER_ENV_ALIASES.get(pid, ()))
+        for cand in (f"{pid.upper()}_API_KEY", f"{pid.upper()}_KEY"):
+            if cand not in names:
+                names.append(cand)
+        return names
+
+    def _keyring_get(self, provider_id: str) -> str:
+        try:
+            import keyring
+            val = keyring.get_password(self._KEYRING_SERVICE, str(provider_id or "").strip().lower())
+            return str(val or "").strip()
+        except Exception:
+            return ""
+
+    def _keyring_set(self, provider_id: str, key: str) -> bool:
+        try:
+            import keyring
+            pid = str(provider_id or "").strip().lower()
+            clean = key.strip()
+            if clean:
+                keyring.set_password(self._KEYRING_SERVICE, pid, clean)
+            else:
+                try:
+                    keyring.delete_password(self._KEYRING_SERVICE, pid)
+                except Exception:
+                    pass
+            return True
+        except Exception:
+            return False
+
+    def get_api_key_source(self, provider_id: str) -> str:
+        for name in self._env_names_for_provider(provider_id):
             val = os.environ.get(name)
-            if val:
+            if val and val.strip():
+                return "env"
+        if self._keyring_get(provider_id):
+            return "keyring"
+        api_keys = self.config.get("api_keys", {})
+        if isinstance(api_keys, dict) and str(api_keys.get(provider_id, "") or "").strip():
+            return "config"
+        return ""
+
+    def get_api_key(self, provider_id: str) -> str:
+        for name in self._env_names_for_provider(provider_id):
+            val = os.environ.get(name)
+            if val and val.strip():
                 return val.strip()
 
+        kr_val = self._keyring_get(provider_id)
+        if kr_val:
+            return kr_val
+
         api_keys = self.config.get("api_keys", {})
-        return api_keys.get(provider_id, "").strip()
+        return str(api_keys.get(provider_id, "") or "").strip()
 
     def set_api_key(self, provider_id: str, key: str) -> bool:
+        use_kr = bool(self.config.get("settings", {}).get("use_system_keyring", False))
+        if use_kr and self._keyring_set(provider_id, key):
+            api_keys = self.config.setdefault("api_keys", {})
+            if isinstance(api_keys, dict) and provider_id in api_keys:
+                api_keys.pop(provider_id, None)
+            return self.save_config()
+
         if "api_keys" not in self.config:
             self.config["api_keys"] = {}
         self.config["api_keys"][provider_id] = key.strip()
