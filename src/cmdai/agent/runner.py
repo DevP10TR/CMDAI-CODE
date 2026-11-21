@@ -74,7 +74,7 @@ def _parse_json_body(body: str, tool_name: str) -> Dict[str, Any]:
     if not text:
         return {}
     try:
-        data = json.loads(text)
+        data = json.loads(text, strict=False)
     except Exception as exc:
         return {"__json_error__": f"Arguments for {tool_name} are not valid JSON: {exc}"}
     if not isinstance(data, dict):
@@ -817,6 +817,42 @@ class AgentRunner:
         }
 
         raw_matches = []
+
+        # Gemma 4 native syntax: <|tool_call>call:name{...}<tool_call|>
+        gemma4_native_pattern = re.compile(
+            r'<\|tool_call>call:(\w+)\s*(\{[\s\S]*?\})\s*<tool_call\|>',
+            re.DOTALL | re.IGNORECASE,
+        )
+        _gemma4_kv_re = re.compile(
+            r'([A-Za-z_][A-Za-z0-9_]*)\s*:\s*<\|"\|>([\s\S]*?)<\|"\|>',
+            re.DOTALL,
+        )
+        for match in gemma4_native_pattern.finditer(text):
+            if _inside_inline_code(match.start()):
+                continue
+            tool_name = _NORM_NAMES.get(match.group(1).lower(), match.group(1).lower())
+            raw_obj = match.group(2).strip()
+            attrs: Dict[str, str] = {}
+            # First extract `<|"|>...<|"|>` fields directly so raw newlines & unescaped quotes in HTML/JS/CSS never break JSON!
+            if '<|"|>' in raw_obj:
+                for kv_m in _gemma4_kv_re.finditer(raw_obj):
+                    attrs[kv_m.group(1)] = kv_m.group(2)
+                # Also pick up simple non-string scalar fields (booleans/numbers) if present
+                stripped_obj = _gemma4_kv_re.sub("", raw_obj)
+                for sc_m in re.finditer(r'([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(true|false|\d+(?:\.\d+)?)', stripped_obj, re.IGNORECASE):
+                    if sc_m.group(1) not in attrs:
+                        attrs[sc_m.group(1)] = sc_m.group(2)
+            if not attrs:
+                norm_obj = raw_obj.replace('<|"|>', '"')
+                norm_obj = re.sub(r'([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:', r'\1"\2":', norm_obj)
+                try:
+                    parsed_obj = json.loads(norm_obj, strict=False)
+                    if isinstance(parsed_obj, dict):
+                        attrs = {str(k): ("" if v is None else str(v)) for k, v in parsed_obj.items()}
+                except Exception:
+                    attrs = _parse_json_body(norm_obj, tool_name)
+            _normalize_attrs(tool_name, attrs, "")
+            raw_matches.append((match.start(), match.end(), tool_name, attrs))
 
         gemma_pattern = re.compile(
             r'<\|tool_call>call:(\w+)(?:\s+([^>]*?))?(?:\s*/>|>(.*?)</\|tool_call>)',
@@ -1944,6 +1980,12 @@ class AgentRunner:
         except Exception:
             pass
 
+        clean = re.sub(
+            r'<\|tool_call>call:\w+\s*\{[\s\S]*?\}\s*<tool_call\|>',
+            '',
+            clean,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
         clean = re.sub(
             r'<\|tool_call>call:\w+(?:\s+[^>]*?)?(?:\s*/>|>(.*?)</\|tool_call>)',
             '',

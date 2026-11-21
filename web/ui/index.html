@@ -1,0 +1,1389 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" id="meta-theme-color" content="#f4f5f7" />
+  <title>CMDAI CODE</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2318181b'/%3E%3Cpath d='M7 9h7v3H10v8h4v3H7V9zm11 0h7v3h-4v8h4v3h-7V9z' fill='%23ffffff'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/styles.css?v=20261117j" />
+</head>
+<body>
+  <!-- OPAQUE MINIMALIST SPLASH SCREEN -->
+  <div id="startup-splash" class="startup-splash">
+    <div class="splash-ambient"></div>
+    <div class="splash-center">
+      <div id="splash-banner-host" class="splash-banner-host" aria-label="CMDAI CODE"></div>
+      <div class="splash-footer">POWER BY XPH STUDIO</div>
+    </div>
+  </div>
+
+  <!-- MAIN APPLICATION SHELL (Clear Light Minimalist Antigravity + OpenCode + Claude UI) -->
+  <div id="app-root" class="app-root">
+    <div class="workspace-body">
+      <!-- LEFT SIDEBAR -->
+      <aside id="left-sidebar" class="left-sidebar">
+        <div class="sb-header">
+          <button id="btn-toggle-sidebar" class="sb-brand-toggle" title="Collapse sidebar">
+            <span id="sidebar-cc-host" class="cc-vector-badge" aria-label="CC"></span>
+            <svg class="ti-svg sb-collapse-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"/><path d="M9 4v16"/><path d="M15 10l-2 2l2 2"/></svg>
+          </button>
+        </div>
+
+        <div class="sb-cta-wrap">
+          <button id="btn-new-thread" class="sb-new-conv-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5l0 14"/><path d="M5 12l14 0"/></svg>
+            <span>New Conversation</span>
+          </button>
+        </div>
+
+        <!-- Quick Nav: Models & Engine -->
+        <div class="sb-quick-nav">
+          <button id="btn-nav-models" class="sb-nav-item" title="Models &amp; Engine (/models)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5m0 1a1 1 0 0 1 1 -1h12a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-12a1 1 0 0 1 -1 -1z"/><path d="M9 9h6v6h-6z"/><path d="M3 10h2"/><path d="M3 14h2"/><path d="M10 3v2"/><path d="M14 3v2"/><path d="M21 10h-2"/><path d="M21 14h-2"/><path d="M10 21v-2"/><path d="M14 21v-2"/></svg>
+            <span>Models &amp; Engine</span>
+          </button>
+        </div>
+
+        <!-- Scrollable Pinned + Projects & Sessions Tree -->
+        <div class="sb-scroll-list">
+          <div id="pinned-sessions-section" class="sb-pinned-section hidden">
+            <div class="sb-section-row">
+              <span class="sb-group-label">Pinned</span>
+            </div>
+            <div id="pinned-sessions-list" class="sb-sessions-list"></div>
+          </div>
+
+          <div class="sb-section-row">
+            <span class="sb-group-label">Projects</span>
+            <div class="sb-mini-actions sb-plus-anchor">
+              <button id="btn-add-workspace" class="sb-icon-tiny" title="New Project or Scratch Chat">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5l0 14"/><path d="M5 12l14 0"/></svg>
+              </button>
+              <div id="sb-plus-menu" class="sb-plus-menu hidden">
+                <button id="btn-plus-with-project" class="pop-opt-row" type="button"><span>With Project</span></button>
+                <button id="btn-plus-without-project" class="pop-opt-row" type="button"><span>Without Project</span></button>
+              </div>
+            </div>
+          </div>
+
+          <div id="workspaces-tree" class="sb-workspaces-tree"></div>
+        </div>
+
+        <div class="sb-footer">
+          <button id="btn-sidebar-settings" class="sb-footer-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z"/><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/></svg>
+            <span>Settings</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- MAIN CANVAS -->
+      <div class="main-canvas-card">
+        <!-- Cohesive Clear Top Bar: Sidebar expand toggle, Open Chat Tabs, Overview -->
+        <header class="stage-topbar">
+          <div class="stage-topbar-left">
+            <button id="btn-expand-sidebar" class="expand-brand-btn hidden" title="Show sidebar">
+              <span id="expand-cc-host" class="cc-vector-badge sm" aria-label="CC"></span>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"/><path d="M9 4v16"/><path d="M14 10l2 2l-2 2"/></svg>
+            </button>
+
+            <div class="topbar-tabs-strip">
+              <div id="topbar-chat-tabs" class="topbar-chat-tabs" role="tablist" aria-label="Open Conversations"></div>
+              <button id="btn-topbar-new-tab" class="topbar-new-tab-btn" title="New Conversation Tab">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5l0 14"/><path d="M5 12l14 0"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="stage-topbar-right">
+            <div id="open-subapp-tabs" class="open-subapp-tabs"></div>
+
+            <div class="overview-anchor">
+              <button id="btn-overview-menu" class="overview-trigger-btn" title="Workspace Panels">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/><path d="M14 4m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/><path d="M4 14m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/><path d="M14 14m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/></svg>
+                <span>Overview</span>
+              </button>
+
+              <div id="overview-popover" class="overview-popover hidden">
+                <div class="ov-pop-header">
+                  <span>Workspace Panels</span>
+                </div>
+                <button class="ov-item" data-ov-action="files">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/><path d="M10 13l-1 2l1 2"/><path d="M14 13l1 2l-1 2"/></svg>
+                  <span>Files &amp; Editor</span>
+                </button>
+                <button class="ov-item" data-ov-action="review">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M18 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M11 6h5a2 2 0 0 1 2 2v8"/><path d="M14 9l-3 -3l3 -3"/><path d="M13 18h-5a2 2 0 0 1 -2 -2v-8"/><path d="M10 15l3 3l-3 3"/></svg>
+                  <span>Git Diff Review</span>
+                </button>
+                <button class="ov-item" data-ov-action="map">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M7 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M17 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M7 8v2a2 2 0 0 0 2 2h6a2 2 0 0 0 2 -2v-2"/><path d="M12 12l0 4"/></svg>
+                  <span>AST Mind Map</span>
+                </button>
+                <button class="ov-item" data-ov-action="terminal">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l3 3l-3 3"/><path d="M13 15l3 0"/><path d="M3 4m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z"/></svg>
+                  <span>Terminal</span>
+                </button>
+                <div class="pop-divider"></div>
+                <button class="ov-item" data-ov-action="checkpoints">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8l0 4l2 2"/><path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5"/></svg>
+                  <span>Checkpoints</span>
+                </button>
+                <button class="ov-item" data-ov-action="tasks">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3l8 -8"/><path d="M20 12v6a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h9"/></svg>
+                  <span>Background Tasks</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <!-- MAIN WORKSPACE STAGE -->
+        <main id="main-stage" class="main-stage">
+          <!-- PRIMARY VIEW: CHAT -->
+          <section id="view-chat" class="view-pane active">
+            <div id="hero-welcome" class="hero-welcome">
+              <div class="hero-center-stack">
+                <div id="hero-banner-host" class="hero-banner-host" title="Click to preview daily CMDAI / CODE contrast"></div>
+                <h1 class="hero-title">What should we build today?</h1>
+              </div>
+            </div>
+
+            <div class="chat-layout">
+              <div id="timeline-rail" class="timeline-rail" aria-label="Turn Timeline">
+                <button id="tl-arrow-up" class="tl-arrow" title="Previous turn">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6 -6l6 6"/></svg>
+                </button>
+                <div id="timeline-dots" class="timeline-dots"></div>
+                <button id="tl-arrow-down" class="tl-arrow" title="Next turn">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6l6 -6"/></svg>
+                </button>
+              </div>
+              <div id="chat-scroll" class="chat-scroll">
+                <div id="chat-messages" class="chat-messages"></div>
+              </div>
+            </div>
+
+            <!-- Minimalist CMDAI CODE Unified Composer Dock -->
+            <div id="composer-wrap" class="composer-wrap">
+              <div id="composer-dock" class="composer-dock">
+                <!-- Inline Autocomplete Popover Above Composer (/ commands & @ file mentions) -->
+                <div id="composer-autocomplete" class="upward-popover autocomplete-popover hidden">
+                  <div class="pop-header">
+                    <span id="autocomplete-title">Commands</span>
+                    <span class="pop-hint">Up/Down · Enter · Esc</span>
+                  </div>
+                  <div id="autocomplete-list" class="autocomplete-list"></div>
+                </div>
+
+                <!-- Inline Approval / Ask Bar Above Composer -->
+                <div id="composer-approval-bar" class="composer-approval-bar hidden"></div>
+
+                <div class="composer-shell-frame">
+                  <!-- Expandable Inline Tasks Drawer (lifts composer cleanly like a 2nd stacked panel) -->
+                  <div id="composer-tasks-drawer" class="composer-tasks-drawer hidden">
+                    <div class="tasks-drawer-head">
+                      <span>Tasks</span>
+                      <span id="tasks-pop-count" class="pop-hint">0/0</span>
+                    </div>
+                    <div id="tasks-pop-list" class="todo-bar-items"></div>
+                  </div>
+                  <!-- Unified CMDAI CODE Context Strip -->
+                  <div id="composer-context-strip" class="composer-context-strip">
+                    <div class="ctx-pills-left">
+                      <div class="ctx-anchor-wrap">
+                        <div id="popover-workdir" class="upward-popover context-popover workdir-popover hidden">
+                          <div class="pop-search-box" style="margin-bottom:6px;">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"/><path d="M21 21l-6 -6"/></svg>
+                            <input id="workdir-search-input" type="text" placeholder="Search Projects" />
+                          </div>
+                          <div id="wd-pop-section-label" class="ag-pop-title">Recent</div>
+                          <div id="workdir-options-list" class="pop-list"></div>
+                          <div class="pop-divider"></div>
+                          <button id="btn-pop-new-project" class="pop-footer-action" type="button">
+                            <span style="display:inline-flex;align-items:center;gap:7px;">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19h-7a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2h4l3 3h7a2 2 0 0 1 2 2v3.5"/><path d="M16 19h6"/><path d="M19 16v6"/></svg>
+                              <span>With Project (New)</span>
+                            </span>
+                          </button>
+                          <button id="btn-pop-without-project" class="pop-footer-action" type="button">
+                            <span style="display:inline-flex;align-items:center;gap:7px;">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-10z"/><path d="M9 12h6"/></svg>
+                              <span>Without Project</span>
+                            </span>
+                          </button>
+                        </div>
+                        <button id="btn-ctx-workdir" class="ctx-repo-pill" type="button" title="Switch Active Project">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"/></svg>
+                          <span id="ctx-workdir-label">CMDAI CODE DESKTOP</span>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6l6 -6"/></svg>
+                        </button>
+                      </div>
+
+                      <div id="ctx-branch-wrap" class="ctx-anchor-wrap hidden">
+                        <div id="popover-branch" class="upward-popover context-popover hidden">
+                          <div class="pop-header">
+                            <span>Git Repository</span>
+                            <span id="branch-pop-commit" class="pop-hint"></span>
+                          </div>
+                          <div id="branch-options-list" class="pop-list"></div>
+                        </div>
+                        <button id="btn-ctx-branch" class="ctx-branch-pill" type="button" title="Inspect or Switch Git Branch">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M7 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M17 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M7 8l0 8"/><path d="M9 18h6a2 2 0 0 0 2 -2v-5"/><path d="M14 14l3 -3l3 3"/></svg>
+                          <span id="ctx-branch-label">main</span>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6l6 -6"/></svg>
+                        </button>
+                      </div>
+
+                      <div id="ctx-tasks-wrap" class="ctx-anchor-wrap hidden">
+                        <button id="btn-ctx-tasks" class="ctx-branch-pill ctx-tasks-pill" type="button" title="Toggle Tasks Panel">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3l8 -8"/><path d="M20 12v6a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h9"/></svg>
+                          <span id="ctx-tasks-label">Tasks (0/0)</span>
+                          <svg class="tasks-pill-chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6 -6l6 6"/></svg>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div class="ctx-pills-right">
+                      <button id="btn-ctx-quick-files" class="ctx-quick-pill" type="button" title="Open Files & Editor Sub-App">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/></svg>
+                        <span>Files</span>
+                      </button>
+                      <button id="btn-ctx-quick-cp" class="ctx-quick-pill" type="button" title="Open Checkpoints Sub-App">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8l0 4l2 2"/><path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5"/></svg>
+                        <span>Checkpoints</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="composer-inner-card">
+                    <div id="pinned-chips" class="pinned-chips"></div>
+                    <div class="composer-input-row">
+                      <textarea id="composer-input" rows="1" placeholder="Ask anything, @ to mention, / for actions"></textarea>
+                    </div>
+                    <div class="composer-footer">
+                      <div class="composer-controls-left">
+                        <button id="btn-pin-file" class="composer-plus-btn" title="Attach file context (@)">
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5l0 14"/><path d="M5 12l14 0"/></svg>
+                        </button>
+
+                        <!-- Model Trigger + Anchored Menu Above It + Hover Flyout Submenu -->
+                        <div class="ctrl-anchor-wrap">
+                          <div id="popover-model" class="upward-popover model-popover hidden">
+                            <div class="pop-header" style="margin-bottom:4px;">
+                              <span>Model</span>
+                              <button id="btn-open-models-window" class="sb-icon-tiny" type="button" title="Configure Models &amp; Providers">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z"/><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/></svg>
+                              </button>
+                            </div>
+                            <div id="pop-models-list" class="pop-models-list"></div>
+                            <div id="model-hover-submenu" class="hover-flyout-submenu hidden"></div>
+                          </div>
+
+                          <button id="btn-composer-model" class="composer-pill" title="Select Model">
+                            <span id="composer-model-name">deepseek-r1:free</span>
+                          </button>
+                        </div>
+
+                        <!-- Thinking Trigger + Anchored Level Menu Above It (bare, no chevron) -->
+                        <div class="ctrl-anchor-wrap">
+                          <div id="popover-thinking" class="upward-popover thinking-popover hidden">
+                            <div class="ag-pop-title">Thinking Effort</div>
+                            <div id="pop-thinking-options" class="pop-list"></div>
+                          </div>
+
+                          <button id="btn-composer-thinking" class="composer-thinking-pill hidden" title="Reasoning Effort (Ctrl+T)">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 -6 6c0 2.15 1.15 4.02 2.85 5.05c.45 .28 .65 .78 .65 1.3v.65h5v-.65c0 -.52 .2 -1.02 .65 -1.3c1.7 -1.03 2.85 -2.9 2.85 -5.05a6 6 0 0 0 -6 -6z"/><path d="M9.5 19h5"/><path d="M10.5 21.5h3"/></svg>
+                            <span id="composer-thinking-label">High</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div class="composer-controls-right">
+                        <!-- Working Voice Dictation (Left of Mode) with Mic Icon & Live Dot-Matrix Wave -->
+                        <button id="btn-composer-voice" class="composer-voice-pill" type="button" title="Voice Dictation (Local Whisper)">
+                          <span class="voice-mic-circle">
+                            <svg id="composer-voice-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                          </span>
+                          <canvas id="composer-voice-wave" class="voice-wave-canvas hidden" width="76" height="22"></canvas>
+                          <span id="composer-voice-lbl" class="voice-state-lbl hidden">transcribing...</span>
+                        </button>
+
+                        <!-- Mode Trigger + Anchored Permissions Menu Directly Above It (bare, no chevron) -->
+                        <div class="ctrl-anchor-wrap">
+                          <div id="popover-permissions" class="upward-popover permissions-popover hidden">
+                            <div class="perm-header">
+                              <span>Agent Mode</span>
+                              <kbd>Shift+Tab</kbd>
+                            </div>
+                            <button class="perm-option" data-perm-mode="auto">
+                              <svg class="perm-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3l0 7l6 0l-8 11l0 -7l-6 0l8 -11"/></svg>
+                              <div class="perm-text">
+                                <div class="perm-title">auto</div>
+                                <div class="perm-desc">Full autonomy — runs tools and commands without asking.</div>
+                              </div>
+                              <svg class="perm-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l10 -10"/></svg>
+                            </button>
+                            <button class="perm-option" data-perm-mode="code">
+                              <svg class="perm-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8l-4 4l4 4"/><path d="M17 8l4 4l-4 4"/><path d="M14 4l-4 16"/></svg>
+                              <div class="perm-text">
+                                <div class="perm-title">code <span class="perm-badge">Default</span></div>
+                                <div class="perm-desc">Auto-edits files, asks confirmation for terminal commands.</div>
+                              </div>
+                              <svg class="perm-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l10 -10"/></svg>
+                            </button>
+                            <button class="perm-option" data-perm-mode="plan">
+                              <svg class="perm-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5.5l1.5 1.5l2.5 -2.5"/><path d="M3.5 11.5l1.5 1.5l2.5 -2.5"/><path d="M3.5 17.5l1.5 1.5l2.5 -2.5"/><path d="M11 6l9 0"/><path d="M11 12l9 0"/><path d="M11 18l9 0"/></svg>
+                              <div class="perm-text">
+                                <div class="perm-title">plan</div>
+                                <div class="perm-desc">Read-only planning — inspects codebase without editing.</div>
+                              </div>
+                              <svg class="perm-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l10 -10"/></svg>
+                            </button>
+                          </div>
+
+                          <button id="btn-cycle-mode" class="composer-mode-pill" title="Agent Execution Mode (Shift+Tab)">
+                            <svg id="composer-mode-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3l0 7l6 0l-8 11l0 -7l-6 0l8 -11"/></svg>
+                            <span id="composer-mode-label">auto</span>
+                          </button>
+                        </div>
+
+                        <button id="btn-send-prompt" class="send-glow-btn" title="Send (Enter)">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5l0 14"/><path d="M18 11l-6 -6"/><path d="M6 11l6 -6"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- FULL-STAGE VIEW: MODELS & ENGINE (dedicated Show in Input tab + Engine tab + Providers, NO Back to Chat button) -->
+          <section id="view-models" class="view-pane">
+            <div class="models-stage-layout">
+              <aside class="models-stage-rail">
+                <div class="models-rail-head">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5m0 1a1 1 0 0 1 1 -1h12a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-12a1 1 0 0 1 -1 -1z"/><path d="M9 9h6v6h-6z"/></svg>
+                  <span>Models &amp; Engine</span>
+                </div>
+
+                <div class="models-primary-tabs">
+                  <button id="btn-mnav-input" class="ag-sb-item active" data-mnav="show_in_input">
+                    <span>Show in Input</span>
+                    <span id="models-visible-count" class="ag-count-pill">7</span>
+                  </button>
+                  <button id="btn-mnav-engine" class="ag-sb-item" data-mnav="engine">
+                    <span>Engine &amp; Hardware</span>
+                  </button>
+                  <button id="btn-mnav-voice" class="ag-sb-item" data-mnav="voice">
+                    <span>Voice Dictation</span>
+                  </button>
+                  <button id="btn-mnav-hf" class="ag-sb-item" data-mnav="hf">
+                    <span>HF GGUF Hub</span>
+                  </button>
+                </div>
+
+                <div class="ag-sb-group-head" style="margin-top:12px;">Providers</div>
+                <div class="models-rail-search">
+                  <input id="models-prov-search" type="text" placeholder="Filter 34+ providers..." />
+                </div>
+                <div id="models-prov-nav" class="ag-sb-nav scrollable"></div>
+                <button id="btn-mnav-add-provider" class="ag-sb-add-proj-btn">+ Add Provider</button>
+              </aside>
+
+              <div class="models-stage-content">
+                <div class="ag-main-scroll models-scroll">
+                  <!-- Dedicated Tab 1: Show in Input -->
+                  <div id="mpane-show-in-input" class="models-tab-pane active">
+                    <div class="models-pane-head">
+                      <div>
+                        <h2 class="ag-pane-title">Show in Input</h2>
+                        <p class="ag-pane-sub">Select which models appear in the chat composer dropdown. Everything else stays organized under Providers.</p>
+                      </div>
+                      <input id="models-input-search" type="text" class="glass-input" style="width:230px;" placeholder="Filter all models..." />
+                    </div>
+                    <div id="models-show-in-input-list" class="ag-models-grid"></div>
+                  </div>
+
+                  <!-- Dedicated Tab 2: Engine & Hardware -->
+                  <div id="mpane-engine" class="models-tab-pane">
+                    <div class="models-pane-head">
+                      <div>
+                        <h2 class="ag-pane-title">Engine &amp; Hardware</h2>
+                        <p class="ag-pane-sub">Configure local GGUF inference acceleration, local server port, and discovered GGUF weights.</p>
+                      </div>
+                      <span class="cap-tag">LOCAL ENGINE</span>
+                    </div>
+
+                    <div class="ag-section-label">Hardware &amp; Runtime</div>
+                    <div class="ag-card-group">
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">Active GGUF Loader</div>
+                          <div class="ag-row-desc">Backend accelerator used for local GGUF weights (/loader).</div>
+                        </div>
+                        <select id="engine-loader-select" class="glass-select">
+                          <option value="cpu">CPU</option>
+                          <option value="cuda">CUDA</option>
+                          <option value="vulkan">Vulkan</option>
+                        </select>
+                      </div>
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">Flash Attention</div>
+                          <div class="ag-row-desc">Reduces VRAM usage and accelerates long-context GGUF inference.</div>
+                        </div>
+                        <input id="engine-flash-attn" type="checkbox" class="toggle-check" checked />
+                      </div>
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">KV Cache Quantization</div>
+                          <div class="ag-row-desc">Auto-selects optimal KV precision based on VRAM and context limit.</div>
+                        </div>
+                        <select id="engine-kv-cache" class="glass-select">
+                          <option value="auto">auto</option>
+                          <option value="f16">f16</option>
+                          <option value="q8_0">q8_0</option>
+                          <option value="q4_0">q4_0</option>
+                        </select>
+                      </div>
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">API Keyring (Windows Creds)</div>
+                          <div class="ag-row-desc">Store API keys in Windows Credential Manager instead of config.json.</div>
+                        </div>
+                        <input id="engine-keyring" type="checkbox" class="toggle-check" />
+                      </div>
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">Local Bridge API Port</div>
+                          <div class="ag-row-desc">Background port stored in config.json.</div>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                          <input id="engine-port-input" type="number" min="1024" max="65535" class="glass-input compact" value="8080" />
+                          <button id="btn-engine-save" class="ed-action-btn primary small">Save Engine</button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="ag-section-label">Local Endpoints &amp; GGUF Models</div>
+                    <div id="engine-local-models-list" class="ag-models-grid"></div>
+                  </div>
+
+                  <!-- Dedicated Tab 3: Voice Dictation -->
+                  <div id="mpane-voice" class="models-tab-pane">
+                    <div class="models-pane-head">
+                      <div>
+                        <h2 class="ag-pane-title">Voice Dictation</h2>
+                        <p class="ag-pane-sub">Offline Whisper speech-to-text powered by your PC (● voice in chat composer).</p>
+                      </div>
+                      <span id="voice-status-tag" class="cap-tag">CHECKING...</span>
+                    </div>
+                    <div class="ag-card-group">
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">Whisper Model</div>
+                          <div class="ag-row-desc">Local faster-whisper model stored in models/whisper/.</div>
+                        </div>
+                        <select id="voice-model-select" class="glass-select">
+                          <option value="large-v3-turbo">large-v3-turbo (Recommended)</option>
+                          <option value="medium">medium</option>
+                          <option value="small">small</option>
+                          <option value="base">base</option>
+                        </select>
+                      </div>
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">Recognition Language</div>
+                          <div class="ag-row-desc">Auto-detect or pin a language (Polish, English, German, etc.).</div>
+                        </div>
+                        <select id="voice-lang-select" class="glass-select">
+                          <option value="auto">Auto-detect</option>
+                          <option value="pl">Polish (pl)</option>
+                          <option value="en">English (en)</option>
+                          <option value="de">German (de)</option>
+                          <option value="es">Spanish (es)</option>
+                          <option value="fr">French (fr)</option>
+                        </select>
+                      </div>
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">Save Voice Configuration</div>
+                          <div id="voice-status-detail" class="ag-row-desc">Checking installed Whisper model...</div>
+                        </div>
+                        <button id="btn-voice-save" class="ed-action-btn primary small" type="button">Save Voice</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Dedicated Tab 4: Hugging Face GGUF Hub -->
+                  <div id="mpane-hf" class="models-tab-pane">
+                    <div class="models-pane-head">
+                      <div>
+                        <h2 class="ag-pane-title">Hugging Face GGUF Hub</h2>
+                        <p class="ag-pane-sub">Search local .gguf repositories from Hugging Face (/hf CLI parity).</p>
+                      </div>
+                      <div style="display:flex;gap:8px;align-items:center;">
+                        <input id="hf-search-input" type="text" class="glass-input" style="width:220px;" placeholder="e.g. qwen coder, gemma 4..." value="qwen2.5 coder" />
+                        <button id="btn-hf-search" class="ed-action-btn primary small" type="button">Search</button>
+                      </div>
+                    </div>
+                    <div id="hf-results-list" class="ag-models-grid"></div>
+                  </div>
+
+                  <!-- Provider View -->
+                  <div id="mpane-provider" class="models-tab-pane">
+                    <div class="models-pane-head">
+                      <div>
+                        <h2 id="models-pane-title" class="ag-pane-title">OpenRouter</h2>
+                        <p id="models-pane-sub" class="ag-pane-sub">Select active model, toggle Show in Input, or configure credentials.</p>
+                      </div>
+                      <span id="models-provider-type-badge" class="cap-tag">API</span>
+                    </div>
+
+                    <div class="ag-section-label">Provider Credentials &amp; Endpoint</div>
+                    <div class="ag-card-group">
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">API Key</div>
+                          <div id="models-key-status" class="ag-row-desc">Optional / Stored in config.json</div>
+                        </div>
+                        <input id="models-api-key-input" type="password" class="glass-input" placeholder="Paste API key..." />
+                      </div>
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">Base URL</div>
+                          <div class="ag-row-desc">OpenAI-compatible endpoint URL.</div>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center;flex:1;justify-content:flex-end;min-width:220px;">
+                          <input id="models-base-url-input" type="text" class="glass-input" style="flex:1;min-width:130px;max-width:250px;" placeholder="https://..." />
+                          <button id="btn-models-save-provider" class="ed-action-btn primary small">Save</button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="models-list-toolbar">
+                      <div class="ag-section-label" style="margin:0;">Available Models</div>
+                      <input id="models-list-search" type="text" class="glass-input" style="width:210px;padding:5px 10px;" placeholder="Filter provider models..." />
+                    </div>
+                    <div id="models-pane-list" class="ag-models-grid"></div>
+                  </div>
+
+                  <!-- Dedicated Add Custom Provider Pane -->
+                  <div id="mpane-add-provider" class="models-tab-pane">
+                    <div class="models-pane-head">
+                      <div>
+                        <h2 class="ag-pane-title">Add Custom Provider</h2>
+                        <p class="ag-pane-sub">Register any OpenAI-compatible API endpoint (Local or Cloud) into config.json.</p>
+                      </div>
+                      <span class="cap-tag">CUSTOM API</span>
+                    </div>
+
+                    <div class="ag-card-group">
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">Provider Name</div>
+                          <div class="ag-row-desc">Display label shown in Models &amp; Engine.</div>
+                        </div>
+                        <input id="custom-prov-name" type="text" class="glass-input" style="width:260px;" placeholder="e.g. Local Qwen Cluster" />
+                      </div>
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">Provider ID (optional)</div>
+                          <div class="ag-row-desc">Lowercase slug identifier; auto-generated if empty.</div>
+                        </div>
+                        <input id="custom-prov-id" type="text" class="glass-input" style="width:260px;" placeholder="e.g. local_qwen" />
+                      </div>
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">Base URL</div>
+                          <div class="ag-row-desc">OpenAI-compatible `/v1` endpoint URL.</div>
+                        </div>
+                        <input id="custom-prov-url" type="text" class="glass-input" style="width:260px;" placeholder="https://api.example.com/v1" />
+                      </div>
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">API Key (optional)</div>
+                          <div class="ag-row-desc">Bearer credential saved securely in config.json.</div>
+                        </div>
+                        <input id="custom-prov-key" type="password" class="glass-input" style="width:260px;" placeholder="sk-..." />
+                      </div>
+                      <div class="ag-card-row">
+                        <div>
+                          <div class="ag-row-title">Model IDs</div>
+                          <div class="ag-row-desc">Comma-separated default model IDs for this provider.</div>
+                        </div>
+                        <input id="custom-prov-models" type="text" class="glass-input" style="width:260px;" placeholder="qwen3-32b, qwen2.5-coder" />
+                      </div>
+                    </div>
+
+                    <div style="display:flex;justify-content:flex-end;margin-top:16px;">
+                      <button id="btn-save-custom-provider" class="ed-action-btn primary">Save &amp; Add Provider</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div id="split-resizer" class="split-resizer"></div>
+
+          <!-- SUB-APP 1: FILES & CODE EDITOR -->
+          <section id="view-editor" class="view-pane subapp-pane" data-subapp="files">
+            <div class="editor-shell">
+              <div class="editor-tabs-bar">
+                <div class="editor-tabs-left">
+                  <button id="btn-editor-toggle-tree" class="sb-icon-tiny" title="Toggle Project File Tree">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"/><path d="M9 4v16"/></svg>
+                  </button>
+                  <span id="ed-breadcrumb" class="ed-breadcrumb">No file opened</span>
+                  <span id="ed-file-stats" class="ed-stats" style="margin-left:8px;">0 lines</span>
+                </div>
+                <div class="editor-actions-bar">
+                  <button id="btn-editor-quick-open" class="ed-action-btn" title="Open File (Ctrl+P)">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"/><path d="M21 21l-6 -6"/></svg>
+                    <span>Open</span>
+                  </button>
+                  <button id="btn-editor-diff-toggle" class="ed-action-btn" title="Review Git Diff">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M18 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M11 6h5a2 2 0 0 1 2 2v8"/></svg>
+                    <span>Review</span>
+                  </button>
+                  <button id="btn-editor-maximize" class="ed-action-btn btn-subapp-maximize" title="Toggle Full Window Standalone Editor">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8v-2a2 2 0 0 1 2 -2h2"/><path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M16 20h2a2 2 0 0 0 2 -2v-2"/></svg>
+                    <span id="ed-maximize-lbl">Full Window</span>
+                  </button>
+                  <button id="btn-editor-save" class="ed-action-btn primary" title="Save File">Save</button>
+                  <button class="sb-icon-tiny btn-subapp-close" title="Close Files Sub-App">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="editor-workspace-area">
+                <aside id="editor-tree-pane" class="editor-tree-pane">
+                  <div class="outline-header" style="display:flex;align-items:center;justify-content:space-between;">
+                    <span>EXPLORER</span>
+                    <button id="btn-editor-new-file" class="sb-icon-tiny" title="Create New File" style="width:20px;height:20px;">+</button>
+                  </div>
+                  <div style="padding:5px 6px;border-bottom:1px solid var(--border-hairline);">
+                    <input id="editor-tree-filter" type="text" class="glass-input" style="width:100%;padding:4px 7px;font-size:11.5px;" placeholder="Filter files..." />
+                  </div>
+                  <div id="editor-tree-list" class="outline-list"></div>
+                </aside>
+
+                <div class="editor-main-column">
+                  <div class="editor-open-tabs-strip">
+                    <div id="editor-tabs-list" class="editor-tabs-list"></div>
+                  </div>
+                  <div id="editor-code-container" class="editor-code-container">
+                    <div id="editor-gutter" class="editor-gutter"></div>
+                    <div class="editor-viewport-wrap">
+                      <pre id="editor-highlight-layer" class="editor-highlight-layer" aria-hidden="true"></pre>
+                      <textarea id="editor-textarea" class="editor-textarea" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="editor-diff-container" class="editor-diff-container hidden">
+                  <div class="diff-toolbar">
+                    <span id="diff-summary-text" style="font-size:12px;color:var(--text-secondary);">Hunk Diff Viewer</span>
+                    <div class="diff-toolbar-btns">
+                      <button id="btn-diff-demo" class="ed-action-btn small">Preview Sample Diff</button>
+                      <button id="btn-diff-close" class="ed-action-btn small">Back to File</button>
+                    </div>
+                  </div>
+                  <div id="editor-diff-hunks" class="editor-diff-hunks"></div>
+                </div>
+              </div>
+
+              <div class="editor-bottom-dock">
+                <div class="dock-tabs">
+                  <button class="dock-tab active" data-dock="terminal">Terminal (<span id="dock-shell-name">Shell</span>)</button>
+                  <button class="dock-tab" data-dock="problems">Problems <span id="dock-problems-count" class="dock-badge">0</span></button>
+                  <button class="dock-tab" data-dock="search">Find in Files</button>
+                  <div class="dock-spacer"></div>
+                  <button id="btn-scan-problems" class="ed-action-btn compact">Scan Project</button>
+                </div>
+
+                <div id="dock-pane-terminal" class="dock-pane active">
+                  <div id="terminal-output" class="terminal-output"></div>
+                  <div class="terminal-input-row">
+                    <span id="term-prompt-label" class="term-prompt">&gt;</span>
+                    <input id="terminal-input" class="terminal-input" type="text" placeholder="Run shell command (e.g. git status, python --version)..." />
+                    <button id="btn-terminal-run" class="ed-action-btn compact primary">Run</button>
+                  </div>
+                </div>
+
+                <div id="dock-pane-problems" class="dock-pane">
+                  <div id="problems-list" class="problems-list"></div>
+                </div>
+
+                <div id="dock-pane-search" class="dock-pane">
+                  <div class="search-files-bar">
+                    <input id="search-files-input" class="glass-input" type="text" placeholder="Fast regex search across workspace..." />
+                    <button id="btn-search-files-run" class="ed-action-btn compact primary">Search</button>
+                  </div>
+                  <div id="search-files-results" class="search-results-list"></div>
+                </div>
+              </div>
+
+              <div class="editor-statusbar">
+                <span id="ed-cursor-status">Ln 1, Col 1</span>
+                <span id="ed-lang-status">Plain Text</span>
+                <span id="ed-lint-status">0 issues</span>
+                <span style="margin-left:auto;">UTF-8</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- SUB-APP 2: 2D AST MIND MAP -->
+          <section id="view-map" class="view-pane subapp-pane" data-subapp="map">
+            <div class="map-shell">
+              <div class="map-toolbar">
+                <div class="map-title-group">
+                  <span class="map-badge">AST MIND MAP</span>
+                  <span id="map-stats-label" class="map-stats">Loading graph...</span>
+                </div>
+                <div class="map-controls">
+                  <input id="map-search-input" class="glass-input" type="text" placeholder="Filter nodes..." />
+                  <div class="map-layout-btns">
+                    <button class="map-btn" data-layout="radial">Radial</button>
+                    <button class="map-btn active" data-layout="layered">Layered</button>
+                    <button class="map-btn" data-layout="force">Force</button>
+                  </div>
+                  <button id="btn-map-imports-only" class="map-btn">Imports Only</button>
+                  <button id="btn-map-zoom-in" class="map-btn">+</button>
+                  <button id="btn-map-zoom-out" class="map-btn">-</button>
+                  <button id="btn-map-fit" class="map-btn">Fit</button>
+                  <button class="ed-action-btn compact btn-subapp-maximize" title="Toggle Full Window"><span>Full Window</span></button>
+                  <button class="sb-icon-tiny btn-subapp-close" title="Close Mind Map Sub-App">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="map-body">
+                <div class="map-canvas-wrap">
+                  <canvas id="map-canvas"></canvas>
+                  <div class="map-legend">
+                    <span><i class="dot root"></i> Workspace</span>
+                    <span><i class="dot dir"></i> Directory</span>
+                    <span><i class="dot file"></i> File</span>
+                    <span><i class="dot selected"></i> Selected</span>
+                    <span><i class="line out"></i> Imports</span>
+                    <span><i class="line in"></i> Imported by</span>
+                  </div>
+                </div>
+
+                <aside id="map-inspector" class="map-inspector">
+                  <div class="inspector-head">
+                    <span class="inspector-kicker">AST NODE INSPECTOR</span>
+                    <h3 id="insp-node-title">Select a Node</h3>
+                    <div id="insp-node-path" class="insp-path">Click any file or directory node</div>
+                  </div>
+                  <div class="inspector-actions">
+                    <button id="btn-insp-open-editor" class="ed-action-btn primary small">Open in Files</button>
+                    <button id="btn-insp-pin-context" class="ed-action-btn small">Pin context</button>
+                  </div>
+                  <div id="insp-body" class="inspector-body"></div>
+                </aside>
+              </div>
+            </div>
+          </section>
+
+          <!-- SUB-APP 3: GIT DIFF REVIEW -->
+          <section id="view-review" class="view-pane subapp-pane" data-subapp="review">
+            <div class="subapp-header">
+              <div class="subapp-header-left">
+                <span class="map-badge">GIT DIFF</span>
+                <h3 class="subapp-title">Git Diff Review</h3>
+                <span id="review-git-meta" class="subapp-meta">Checking git status...</span>
+              </div>
+              <div class="subapp-header-actions">
+                <button id="btn-review-refresh" class="ed-action-btn compact">Refresh</button>
+                <button id="btn-review-open-editor" class="ed-action-btn compact">Open in Editor</button>
+                <button class="ed-action-btn compact btn-subapp-maximize"><span>Full Window</span></button>
+                <button class="sb-icon-tiny btn-subapp-close" title="Close Review Sub-App">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="subapp-body review-split-body">
+              <aside class="review-files-sidebar">
+                <div class="outline-header">CHANGED FILES</div>
+                <div id="review-files-list" class="review-files-list"></div>
+              </aside>
+              <div class="review-diff-pane">
+                <pre id="review-diff-output" class="review-diff-pre">Select a modified file or click Refresh to view working tree changes.</pre>
+              </div>
+            </div>
+          </section>
+
+          <!-- SUB-APP 4: WORKSPACE TERMINAL -->
+          <section id="view-terminal" class="view-pane subapp-pane" data-subapp="terminal">
+            <div class="subapp-header">
+              <div class="subapp-header-left">
+                <span class="map-badge">SHELL</span>
+                <h3 class="subapp-title">Workspace Terminal</h3>
+              </div>
+              <div class="subapp-header-actions">
+                <button id="btn-subapp-terminal-clear" class="ed-action-btn compact">Clear</button>
+                <button class="ed-action-btn compact btn-subapp-maximize"><span>Full Window</span></button>
+                <button class="sb-icon-tiny btn-subapp-close" title="Close Terminal Sub-App">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="subapp-body subapp-term-body">
+              <div id="subapp-terminal-output" class="subapp-term-output"></div>
+              <div class="subapp-term-input-row">
+                <span class="term-prompt">&gt;</span>
+                <input id="subapp-terminal-input" type="text" class="terminal-input" placeholder="Run command in active workspace (e.g. git status, pytest, ls)..." />
+                <button id="btn-subapp-terminal-run" class="ed-action-btn compact primary">Run</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- SUB-APP 5: WORKSPACE CHECKPOINTS -->
+          <section id="view-checkpoints" class="view-pane subapp-pane" data-subapp="checkpoints">
+            <div class="subapp-header">
+              <div class="subapp-header-left">
+                <span class="map-badge">SNAPSHOTS</span>
+                <h3 class="subapp-title">Workspace Checkpoints</h3>
+                <span id="orbit-cp-count" class="cap-tag">0</span>
+              </div>
+              <div class="subapp-header-actions">
+                <button class="ed-action-btn compact btn-subapp-maximize"><span>Full Window</span></button>
+                <button class="sb-icon-tiny btn-subapp-close" title="Close Checkpoints Sub-App">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="subapp-body subapp-pad">
+              <div class="cp-create-bar">
+                <input id="cp-prompt-input" type="text" placeholder="Snapshot description (e.g. Before refactor)..." />
+                <button id="btn-cp-create" class="ed-action-btn primary small">+ Create Checkpoint</button>
+              </div>
+              <div id="orbit-checkpoints-list" class="cp-list"></div>
+            </div>
+          </section>
+
+          <!-- SUB-APP 6: BACKGROUND TASKS -->
+          <section id="view-tasks" class="view-pane subapp-pane" data-subapp="tasks">
+            <div class="subapp-header">
+              <div class="subapp-header-left">
+                <span class="map-badge">TASKS</span>
+                <h3 class="subapp-title">Background Tasks &amp; Subagents</h3>
+                <span id="orbit-subagent-count" class="cap-tag">0</span>
+              </div>
+              <div class="subapp-header-actions">
+                <button class="ed-action-btn compact btn-subapp-maximize"><span>Full Window</span></button>
+                <button class="sb-icon-tiny btn-subapp-close" title="Close Tasks Sub-App">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="subapp-body subapp-pad">
+              <div id="orbit-subagents-list" class="cp-list"></div>
+            </div>
+          </section>
+
+          <!-- SUB-APP 6B: SUBAGENT INSPECTOR (Dedicated CLI-parity right-hand pane) -->
+          <section id="view-subagent" class="view-pane subapp-pane" data-subapp="subagent">
+            <div class="subapp-header">
+              <div class="subapp-header-left">
+                <span class="map-badge">SUBAGENT</span>
+                <h3 id="subagent-pane-title" class="subapp-title">Subagent</h3>
+                <span id="subagent-pane-status" class="cap-tag">running</span>
+                <span id="subagent-pane-elapsed" class="cap-tag hidden"></span>
+              </div>
+              <div class="subapp-header-actions">
+                <button id="btn-subagent-pane-stop" class="ed-action-btn compact hidden" type="button">Stop</button>
+                <button class="ed-action-btn compact btn-subapp-maximize" type="button"><span>Full Window</span></button>
+                <button class="sb-icon-tiny btn-subapp-close" type="button" title="Close Subagent Inspector">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
+                </button>
+              </div>
+            </div>
+            <div id="subagent-pane-body" class="subapp-body subapp-pad" style="display:flex;flex-direction:column;gap:14px;overflow-y:auto;"></div>
+          </section>
+
+          <!-- SUB-APP 7: MCP SERVERS -->
+          <section id="view-mcp" class="view-pane subapp-pane" data-subapp="mcp">
+            <div class="subapp-header">
+              <div class="subapp-header-left">
+                <span class="map-badge">MCP</span>
+                <h3 class="subapp-title">MCP Servers</h3>
+                <span id="orbit-mcp-count" class="cap-tag">0</span>
+              </div>
+              <div class="subapp-header-actions">
+                <button class="ed-action-btn compact btn-subapp-maximize"><span>Full Window</span></button>
+                <button class="sb-icon-tiny btn-subapp-close" title="Close MCP Sub-App">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="subapp-body subapp-pad">
+              <div class="mcp-add-bar">
+                <input id="mcp-name-input" type="text" class="glass-input" placeholder="Server name (e.g. filesystem)" />
+                <input id="mcp-cmd-input" type="text" class="glass-input" placeholder="Command or URL (e.g. npx or https://...)" />
+                <input id="mcp-args-input" type="text" class="glass-input" placeholder="Args (optional)" />
+                <button id="btn-mcp-add" class="ed-action-btn primary small">+ Add Server</button>
+              </div>
+              <div id="orbit-mcp-list" class="cp-list"></div>
+            </div>
+          </section>
+
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <!-- LARGER ANTIGRAVITY SETTINGS & PROJECT WINDOW -->
+  <div id="settings-overlay" class="modal-overlay hidden">
+    <div class="ag-modal-dialog animate-pop">
+      <aside class="ag-modal-sidebar">
+        <div class="ag-sb-group-head">Settings</div>
+        <div class="ag-sb-nav">
+          <button class="ag-sb-item settings-tab active" data-stab="agent">Agent &amp; Generation</button>
+          <button class="ag-sb-item settings-tab" data-stab="permissions">Tool Permissions</button>
+          <button class="ag-sb-item settings-tab" data-stab="appearance">Appearance &amp; UI</button>
+          <button class="ag-sb-item settings-tab" data-stab="editor">Editor &amp; Terminal</button>
+          <button class="ag-sb-item settings-tab" data-stab="mcp">MCP Servers</button>
+          <button class="ag-sb-item settings-tab" data-stab="shortcuts">Shortcuts</button>
+        </div>
+
+        <div class="ag-sb-group-head" style="margin-top:16px;">Projects</div>
+        <div id="settings-projects-nav" class="ag-sb-nav scrollable-short"></div>
+        <button id="btn-settings-add-project" class="ag-sb-add-proj-btn">+ Add Project</button>
+      </aside>
+
+      <div class="ag-modal-main">
+        <button id="btn-close-settings" class="ag-modal-close" title="Close Settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
+        </button>
+
+        <div class="ag-main-scroll">
+          <!-- Tab 1: Agent & Generation -->
+          <div id="stab-agent" class="settings-pane active">
+            <h2 class="ag-pane-title">Agent &amp; Generation</h2>
+            <p class="ag-pane-sub">Configure autonomous CMDAI CODE execution, subagent delegation, and sampling parameters. Mode and Thinking are controlled directly in the composer.</p>
+
+            <div class="ag-section-label">Autonomous Agent</div>
+            <div class="ag-card-group">
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Subagent Model Override</div>
+                  <div class="ag-row-desc">Optional model ID for spawned subagents (leave blank to inherit active model).</div>
+                </div>
+                <input id="set-subagent-model" type="text" class="glass-input" style="width:220px;" placeholder="Inherit active model" />
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Auto AST Repo Map Context</div>
+                  <div class="ag-row-desc">Attach structural /map outline to agent turns automatically.</div>
+                </div>
+                <input id="set-auto-repomap" type="checkbox" class="toggle-check" checked />
+              </div>
+            </div>
+
+            <div class="ag-section-label">Sampling Parameters</div>
+            <div class="ag-card-group">
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Temperature</div>
+                  <div class="ag-row-desc">Lower values keep code edits deterministic (0.20–0.30 recommended).</div>
+                </div>
+                <input id="set-temperature" type="number" min="0" max="2" step="0.05" class="glass-input compact" value="0.2" />
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Top-P Sampling</div>
+                  <div class="ag-row-desc">Nucleus probability threshold for candidate tokens (config.generation.top_p).</div>
+                </div>
+                <input id="set-top-p" type="number" min="0.1" max="1" step="0.05" class="glass-input compact" value="0.95" />
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Repetition Penalty</div>
+                  <div class="ag-row-desc">Discourages repeating tokens in local GGUF / llama.cpp generations.</div>
+                </div>
+                <input id="set-rep-penalty" type="number" min="1" max="2" step="0.05" class="glass-input compact" value="1.1" />
+              </div>
+            </div>
+
+            <div class="ag-section-label">Local Runtime, Voice &amp; Security (CLI Parity)</div>
+            <div class="ag-card-group">
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Flash Attention</div>
+                  <div class="ag-row-desc">Reduces VRAM usage for local GGUF context windows.</div>
+                </div>
+                <input id="set-cli-flash-attn" type="checkbox" class="toggle-check" checked />
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">KV Cache Quantization</div>
+                  <div class="ag-row-desc">Auto-scales KV precision based on VRAM and context size.</div>
+                </div>
+                <select id="set-cli-kv-cache" class="glass-select">
+                  <option value="auto">auto</option>
+                  <option value="f16">f16</option>
+                  <option value="q8_0">q8_0</option>
+                  <option value="q4_0">q4_0</option>
+                </select>
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Windows API Keyring</div>
+                  <div class="ag-row-desc">Store API keys in Windows Credential Manager instead of config.json.</div>
+                </div>
+                <input id="set-cli-keyring" type="checkbox" class="toggle-check" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 2: Tool Permissions -->
+          <div id="stab-permissions" class="settings-pane">
+            <h2 class="ag-pane-title">Tool Permissions</h2>
+            <p class="ag-pane-sub">Execution policies depend on your active Agent Mode (auto, code, plan) plus tool rules in config.json.</p>
+
+            <div class="ag-section-label">Active Mode Policy</div>
+            <div class="ag-card-group">
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Mode-Based Execution</div>
+                  <div class="ag-row-desc">Switch execution mode across auto, code, and plan.</div>
+                </div>
+                <input id="set-agent-mode" type="hidden" value="code" />
+                <div class="seg-switch" data-seg-input="set-agent-mode">
+                  <button type="button" class="seg-btn" data-seg-val="auto">auto</button>
+                  <button type="button" class="seg-btn active" data-seg-val="code">code</button>
+                  <button type="button" class="seg-btn" data-seg-val="plan">plan</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="ag-section-label">Workspace Tool Policies</div>
+            <div class="ag-card-group">
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Read / Search / Glob</div>
+                  <div class="ag-row-desc">Reading workspace files, AST symbols, and regex search.</div>
+                </div>
+                <input id="set-perm-read" type="hidden" value="allow" />
+                <div class="seg-switch" data-seg-input="set-perm-read">
+                  <button type="button" class="seg-btn active" data-seg-val="allow">allow</button>
+                  <button type="button" class="seg-btn" data-seg-val="ask">ask</button>
+                </div>
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Write New Files</div>
+                  <div class="ag-row-desc">Creating new files in active workspace.</div>
+                </div>
+                <input id="set-perm-write" type="hidden" value="ask" />
+                <div class="seg-switch" data-seg-input="set-perm-write">
+                  <button type="button" class="seg-btn" data-seg-val="allow">allow</button>
+                  <button type="button" class="seg-btn active" data-seg-val="ask">ask</button>
+                  <button type="button" class="seg-btn" data-seg-val="deny">deny</button>
+                </div>
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Edit Existing Files</div>
+                  <div class="ag-row-desc">Applying targeted patches to existing workspace files.</div>
+                </div>
+                <input id="set-perm-edit" type="hidden" value="ask" />
+                <div class="seg-switch" data-seg-input="set-perm-edit">
+                  <button type="button" class="seg-btn" data-seg-val="allow">allow</button>
+                  <button type="button" class="seg-btn active" data-seg-val="ask">ask</button>
+                  <button type="button" class="seg-btn" data-seg-val="deny">deny</button>
+                </div>
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Terminal Commands</div>
+                  <div class="ag-row-desc">Running non-readonly shell commands (git status/diff allowed by default).</div>
+                </div>
+                <input id="set-perm-command" type="hidden" value="ask" />
+                <div class="seg-switch" data-seg-input="set-perm-command">
+                  <button type="button" class="seg-btn" data-seg-val="allow">allow</button>
+                  <button type="button" class="seg-btn active" data-seg-val="ask">ask</button>
+                  <button type="button" class="seg-btn" data-seg-val="deny">deny</button>
+                </div>
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Auto-Approve Read-Only Tools</div>
+                  <div class="ag-row-desc">Never prompt for safe read, list, and search tool calls.</div>
+                </div>
+                <input id="set-auto-approve-readonly" type="checkbox" class="toggle-check" checked />
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 3: Appearance & UI -->
+          <div id="stab-appearance" class="settings-pane">
+            <h2 class="ag-pane-title">Appearance &amp; UI</h2>
+            <p class="ag-pane-sub">Choose your CMDAI CODE Desktop surface palette and workspace motion preferences.</p>
+
+            <div class="ag-section-label">Interface Theme</div>
+            <div class="ag-theme-grid">
+              <button class="ag-theme-card active" data-theme-choice="light" id="btn-theme-light">
+                <div class="ag-theme-title">Clear Light</div>
+                <div class="ag-theme-desc">Crisp daylight workspace with charcoal CMDAI CODE emblem contrast.</div>
+              </button>
+              <button class="ag-theme-card" data-theme-choice="dark" id="btn-theme-dark">
+                <div class="ag-theme-title">Matte Dark Slate</div>
+                <div class="ag-theme-desc">Low-glare evening workspace with crisp white/gray CMDAI CODE contrast.</div>
+              </button>
+            </div>
+
+            <div class="ag-section-label">Composer &amp; Motion</div>
+            <div class="ag-card-group">
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Enable Thinking &amp; Stream Animations</div>
+                  <div class="ag-row-desc">Animate CLI loading glyphs, active session pulses, and turn transitions.</div>
+                </div>
+                <input id="set-enable-anim" type="checkbox" class="toggle-check" checked />
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Auto-Hide Composer Top Bar While Typing</div>
+                  <div class="ag-row-desc">Collapse the project/branch header strip when typing a prompt to maximize focus.</div>
+                </div>
+                <input id="set-hide-ctx-type" type="checkbox" class="toggle-check" checked />
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 4: Editor & Terminal -->
+          <div id="stab-editor" class="settings-pane">
+            <h2 class="ag-pane-title">Editor &amp; Terminal</h2>
+            <p class="ag-pane-sub">Customize the standalone Code Editor sub-app and integrated workspace shell.</p>
+
+            <div class="ag-section-label">Code Editor</div>
+            <div class="ag-card-group">
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Code Font Size (px)</div>
+                  <div class="ag-row-desc">Applied live to viewport and gutter.</div>
+                </div>
+                <input id="set-editor-fontsize" type="number" min="10" max="24" step="1" class="glass-input compact" value="13" />
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Tab Indentation Width</div>
+                  <div class="ag-row-desc">Spaces per indentation level.</div>
+                </div>
+                <select id="set-editor-tabsize" class="glass-select">
+                  <option value="2">2 spaces</option>
+                  <option value="4" selected>4 spaces</option>
+                  <option value="8">8 spaces</option>
+                </select>
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Format on Save</div>
+                  <div class="ag-row-desc">Run Ruff or built-in formatter when saving files.</div>
+                </div>
+                <input id="set-format-onsave" type="checkbox" class="toggle-check" checked />
+              </div>
+            </div>
+
+            <div class="ag-section-label">Terminal</div>
+            <div class="ag-card-group">
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Default Terminal Shell</div>
+                  <div class="ag-row-desc">Executable used by Workspace Terminal sub-app.</div>
+                </div>
+                <input id="set-terminal-shell" type="text" class="glass-input" value="powershell.exe" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 5: MCP Servers -->
+          <div id="stab-mcp" class="settings-pane">
+            <h2 class="ag-pane-title">MCP Servers</h2>
+            <p class="ag-pane-sub">Register and manage Model Context Protocol servers saved in mcp_config.json.</p>
+
+            <div class="ag-section-label">Add MCP Server</div>
+            <div class="ag-card-group">
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Server Name</div>
+                  <div class="ag-row-desc">Unique identifier shown in MCP registry.</div>
+                </div>
+                <input id="set-mcp-name" type="text" class="glass-input" style="width:240px;" placeholder="e.g. filesystem or github" />
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Command or HTTP URL</div>
+                  <div class="ag-row-desc">Executable (npx / python) or remote MCP HTTP endpoint.</div>
+                </div>
+                <input id="set-mcp-cmd" type="text" class="glass-input" style="width:240px;" placeholder="e.g. npx or https://..." />
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Arguments (optional)</div>
+                  <div class="ag-row-desc">Space-separated CLI arguments for stdio MCP servers.</div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <input id="set-mcp-args" type="text" class="glass-input" style="width:170px;" placeholder="-y @modelcontextprotocol/..." />
+                  <button id="btn-set-mcp-add" type="button" class="ed-action-btn primary small">+ Add</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="ag-section-label" style="display:flex;align-items:center;justify-content:space-between;">
+              <span>Configured Servers</span>
+              <span id="set-orbit-mcp-count" class="cap-tag">0</span>
+            </div>
+            <div id="set-orbit-mcp-list" class="cp-list"></div>
+          </div>
+
+          <!-- Tab 6: Shortcuts -->
+          <div id="stab-shortcuts" class="settings-pane">
+            <h2 class="ag-pane-title">Shortcuts</h2>
+            <p class="ag-pane-sub">Complete keyboard shortcuts for CMDAI CODE Desktop.</p>
+
+            <div class="ag-section-label">Composer &amp; Agent</div>
+            <div class="ag-card-group">
+              <div class="ag-card-row"><div><div class="ag-row-title">Send Prompt / Run Command</div><div class="ag-row-desc">Submit message to the agent or execute selected autocomplete item</div></div><kbd class="ag-kbd">Enter</kbd></div>
+              <div class="ag-card-row"><div><div class="ag-row-title">Insert Newline</div><div class="ag-row-desc">Add a line break in the prompt composer without sending</div></div><kbd class="ag-kbd">Shift+Enter</kbd></div>
+              <div class="ag-card-row"><div><div class="ag-row-title">Cycle Agent Mode</div><div class="ag-row-desc">Switch execution mode between auto, code, and plan</div></div><kbd class="ag-kbd">Shift+Tab</kbd></div>
+              <div class="ag-card-row"><div><div class="ag-row-title">Cycle Thinking Effort</div><div class="ag-row-desc">Adjust reasoning effort when active model supports thinking</div></div><kbd class="ag-kbd">Ctrl+T</kbd></div>
+              <div class="ag-card-row"><div><div class="ag-row-title">Slash Commands</div><div class="ag-row-desc">Open agent command palette above the input</div></div><kbd class="ag-kbd">/</kbd></div>
+              <div class="ag-card-row"><div><div class="ag-row-title">Mention Workspace File</div><div class="ag-row-desc">Attach file reference chip into prompt context</div></div><kbd class="ag-kbd">@</kbd></div>
+              <div class="ag-card-row"><div><div class="ag-row-title">Navigate Hints</div><div class="ag-row-desc">Move through slash command or file mention suggestions</div></div><kbd class="ag-kbd">Up / Down</kbd></div>
+              <div class="ag-card-row"><div><div class="ag-row-title">Cancel / Dismiss</div><div class="ag-row-desc">Stop active generation or close open popovers and dialogs</div></div><kbd class="ag-kbd">Escape</kbd></div>
+            </div>
+
+            <div class="ag-section-label">Workspace &amp; Editor</div>
+            <div class="ag-card-group">
+              <div class="ag-card-row"><div><div class="ag-row-title">Quick Open File</div><div class="ag-row-desc">Search and open any workspace file in Files &amp; Editor</div></div><kbd class="ag-kbd">Ctrl+P</kbd></div>
+              <div class="ag-card-row"><div><div class="ag-row-title">Save Active File</div><div class="ag-row-desc">Write active editor buffer to disk and refresh diagnostics</div></div><kbd class="ag-kbd">Ctrl+S</kbd></div>
+              <div class="ag-card-row"><div><div class="ag-row-title">Jump to Timeline Start / End</div><div class="ag-row-desc">Scroll conversation history to top or latest turn</div></div><kbd class="ag-kbd">Home / End</kbd></div>
+              <div class="ag-card-row"><div><div class="ag-row-title">Page Scroll Conversation</div><div class="ag-row-desc">Scroll chat viewport up or down by one page</div></div><kbd class="ag-kbd">PageUp / PageDown</kbd></div>
+            </div>
+          </div>
+
+          <!-- Tab 7: Selected Project Details (Real Project Customizations & Workspace Skills only) -->
+          <div id="stab-project" class="settings-pane">
+            <div class="proj-title-row">
+              <h2 id="proj-settings-title" class="ag-pane-title" style="margin:0;">CMDAI CODE DESKTOP</h2>
+              <button id="btn-proj-rename" class="sb-icon-tiny" title="Rename Project Label">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4"/><path d="M13.5 6.5l4 4"/></svg>
+              </button>
+            </div>
+            <p class="ag-pane-sub">Manage project folders, instruction rules, and workspace skills.</p>
+
+            <div class="ag-section-label">Folders</div>
+            <div class="proj-folders-card">
+              <div id="proj-folders-list"></div>
+              <div id="proj-add-folder-form" class="proj-add-folder-form hidden">
+                <input id="proj-folder-path-input" type="text" class="glass-input" style="flex:1;" placeholder="Enter local folder path (e.g. E:\MyProject)..." />
+                <button id="btn-proj-folder-add-go" class="ed-action-btn primary small">Open Folder</button>
+              </div>
+              <button id="btn-proj-add-folder" class="proj-add-folder-bar">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5l0 14"/><path d="M5 12l14 0"/></svg>
+                <span>Switch / Add Folder</span>
+              </button>
+            </div>
+
+            <div class="ag-section-label">Customizations</div>
+            <div id="proj-customizations-card" class="ag-info-card">
+              <p id="proj-customizations-status">Checking project rules and customization files...</p>
+              <div id="proj-customizations-list" class="proj-custom-list"></div>
+            </div>
+
+            <div class="proj-skills-header" id="btn-toggle-proj-skills">
+              <span class="ag-section-label" style="margin:0;">Workspace Skills</span>
+              <span id="proj-skills-count" class="ag-count-pill">0</span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6l6 -6"/></svg>
+            </div>
+            <div id="proj-skills-list" class="ag-card-group"></div>
+          </div>
+
+          <!-- Tab 8: Dedicated Add New Project Pane (Always creates/adds a separate project) -->
+          <div id="stab-new-project" class="settings-pane">
+            <h2 class="ag-pane-title">Add New Project</h2>
+            <p class="ag-pane-sub">Create a new project folder or attach another repository from disk as a separate workspace.</p>
+
+            <div class="ag-section-label">Create or Open Project Folder</div>
+            <div class="ag-card-group">
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Project Display Name</div>
+                  <div class="ag-row-desc">Optional custom label in the Projects sidebar.</div>
+                </div>
+                <input id="new-proj-name-input" type="text" class="glass-input" style="width:260px;" placeholder="e.g. My New App" />
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Project Folder Path</div>
+                  <div class="ag-row-desc">Creates the folder automatically if it does not exist yet.</div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex:1;justify-content:flex-end;min-width:260px;">
+                  <input id="new-proj-path-input" type="text" class="glass-input" style="flex:1;max-width:300px;" placeholder="e.g. E:\Projects\my-app" />
+                  <button id="btn-create-new-proj" class="ed-action-btn primary">Create &amp; Open</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="ag-section-label">Other Workspaces on Disk</div>
+            <div id="new-proj-candidates-list" class="ag-card-group"></div>
+          </div>
+        </div>
+
+        <div class="ag-main-footer">
+          <span id="settings-save-status" class="settings-status-msg"></span>
+          <div style="display:flex;gap:8px;">
+            <button id="btn-settings-cancel" class="ed-action-btn">Close</button>
+            <button id="btn-settings-save" class="ed-action-btn primary">Save Settings</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- QUICK OPEN (Ctrl+P from Files -> Open button) -->
+  <div id="quick-open-overlay" class="modal-overlay hidden">
+    <div class="command-center-dialog animate-pop">
+      <div class="cc-search-row">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"/><path d="M21 21l-6 -6"/></svg>
+        <input id="qo-search-input" type="text" placeholder="Open file in Files panel..." />
+        <kbd>ESC</kbd>
+      </div>
+      <div id="qo-results-list" class="cc-results-list"></div>
+    </div>
+  </div>
+
+  <!-- CENTERED CUSTOMIZATION / RULE / SKILL READER MODAL -->
+  <div id="customization-reader-modal" class="modal-overlay hidden">
+    <div class="reader-dialog animate-pop">
+      <div class="reader-head">
+        <div>
+          <div id="reader-title" class="reader-title">memory.md</div>
+          <div id="reader-path" class="reader-path">.cmdai/memory.md</div>
+        </div>
+        <button id="btn-close-reader" class="sb-icon-tiny" title="Close Reader">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <pre id="reader-body" class="reader-body"></pre>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script type="module" src="/editor.js?v=20261117j"></script>
+  <script type="module" src="/map.js?v=20261117j"></script>
+  <script type="module" src="/app.js?v=20261117j"></script>
+</body>
+</html>

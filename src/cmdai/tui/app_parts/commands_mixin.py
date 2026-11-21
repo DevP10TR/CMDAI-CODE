@@ -133,7 +133,8 @@ class CommandsMixin:
                 "/diff", "/commit", "/todo", "/bg",
                 "/ctx", "/add", "/mode", "/thinking",
                 "/cd", "/changelog", "/update", "/updatesettings", "/mcp",
-                "/custom", "/plugins", "/memory", "/map"
+                "/custom", "/plugins", "/memory", "/map",
+                "/tunnel", "/tunel", "/share", "/unshare"
             )
             if cmd in modal_cmds:
                 pass
@@ -229,6 +230,10 @@ class CommandsMixin:
             "/tools": self._cmd_tools,
             "/status": self._cmd_status,
             "/sessions": self._cmd_sessions,
+            "/tunnel": self._cmd_tunnel,
+            "/tunel": self._cmd_tunnel,
+            "/share": self._cmd_share,
+            "/unshare": self._cmd_unshare,
             "/system": self._cmd_system,
             "/params": self._cmd_params,
             "/settings": self._cmd_settings,
@@ -360,7 +365,7 @@ class CommandsMixin:
                       "/new", "/params", "/help", "/loader", "/settings",
                       "/tools", "/status", "/diff", "/commit",
                       "/todo", "/bg", "/ctx", "/add", "/mode", "/thinking",
-                      "/changelog", "/update", "/updatesettings", "/mcp", "/custom", "/plugins", "/memory", "/exit")
+                      "/changelog", "/update", "/updatesettings", "/mcp", "/custom", "/plugins", "/memory", "/tunnel", "/tunel", "/share", "/unshare", "/exit")
         if not self.in_chat_mode and cmd not in modal_cmds:
             self._switch_to_chat()
         self._dispatch_command(cmd)
@@ -484,6 +489,235 @@ class CommandsMixin:
         except Exception:
             pass
         self.push_screen(SessionsModal(workdir=self.workdir), self._on_session_selected)
+
+    def _cmd_tunnel(self, arg: str = "") -> None:
+        from ...core.tunnel import find_cloudflared
+        from ..modals.share_modal import CloudflaredInstallModal
+
+        sub = (arg or "").strip().lower()
+        if sub in ("stop", "off", "close"):
+            proc = getattr(self, "_tunnel_proc", None)
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            self._tunnel_proc = None
+            if self.http_server is not None:
+                self.http_server.revoke_remote()
+            self.notify("Remote tunnel disconnected and token revoked.", title="Tunnel", timeout=3.0)
+            return
+
+        if not find_cloudflared():
+            def _after_install(installed: bool) -> None:
+                if installed:
+                    self._launch_tunnel_now()
+
+            self.push_screen(CloudflaredInstallModal(feature_name="/tunnel"), _after_install)
+            return
+
+        self._launch_tunnel_now()
+
+    def _launch_tunnel_now(self) -> None:
+        from ...core.tunnel import launch_tunnel_terminal
+
+        if self.http_server is None:
+            port = self.settings.config.get("server", {}).get("port", 8080)
+            self.http_server = BackgroundHTTPServer(port=port, app_ref=self)
+        if not self.http_server.is_running:
+            self.http_server.start()
+
+        # Terminate previous tunnel window if still open
+        old = getattr(self, "_tunnel_proc", None)
+        if old is not None and old.poll() is None:
+            try:
+                old.terminate()
+            except Exception:
+                pass
+
+        token, pin = self.http_server.enable_remote()
+        try:
+            self._tunnel_proc = launch_tunnel_terminal(
+                mode="tunnel",
+                backend_port=self.http_server.port,
+                token=token,
+                pin=pin,
+                title=getattr(self, "session_title", "") or self.current_session_id,
+                session_id=self.current_session_id,
+            )
+            self.notify(
+                f"Remote Rust Web UI tunnel opened in a new terminal (PIN: {pin}). Close that terminal or run /tunnel stop to disconnect.",
+                title="Remote Tunnel",
+                timeout=6.0,
+            )
+        except Exception as exc:
+            self.notify(f"Failed to launch tunnel terminal: {exc}", title="Tunnel Error", severity="error", timeout=4.0)
+
+    def _cmd_share(self, arg: str = "") -> None:
+        from ...core.exporter import summarize_session_counts
+        from ...core.sessions import clean_title_from_prompt
+        from ..modals.share_modal import ShareSessionModal
+
+        try:
+            self._save_current_session()
+        except Exception:
+            pass
+
+        cur_title = getattr(self, "session_title", "") or "Current Session"
+        if cur_title in ("", "New session") and self.messages:
+            for m in self.messages:
+                if m.get("role") == "user" and m.get("content"):
+                    cur_title = clean_title_from_prompt(str(m["content"])) or "Current Session"
+                    break
+
+        cur_counts = summarize_session_counts(self.messages)
+        entries: List[Dict[str, Any]] = []
+        if self.messages:
+            entries.append({
+                "id": self.current_session_id,
+                "title": cur_title,
+                "is_current": True,
+                "msg_count": len(self.messages),
+                "turn_count": cur_counts["turns"],
+                "tool_count": cur_counts["tools"],
+                "updated_rel": "now",
+                "dir_name": os.path.basename(self.workdir.rstrip("\\/")) or "",
+                "is_current_dir": True,
+                "model": self.current_model_id,
+            })
+        seen = {self.current_session_id} if self.messages else set()
+        try:
+            saved = self.session_manager.list_sessions(current_dir=self.workdir) or []
+            for s in saved[:60]:
+                sid = str(s.get("id") or "")
+                if not sid or sid in seen:
+                    continue
+                seen.add(sid)
+                turn_count = None
+                tool_count = None
+                try:
+                    loaded_s = self.session_manager.load_session(sid) or {}
+                    raw_m = loaded_s.get("messages") or []
+                    if not raw_m:
+                        continue
+                    c_info = summarize_session_counts(raw_m)
+                    turn_count = c_info["turns"]
+                    tool_count = c_info["tools"]
+                except Exception:
+                    pass
+                entries.append({
+                    "id": sid,
+                    "title": s.get("title") or sid,
+                    "is_current": False,
+                    "msg_count": int(s.get("msg_count") or s.get("message_count") or 0),
+                    "turn_count": turn_count,
+                    "tool_count": tool_count,
+                    "updated_rel": s.get("relative_time") or "",
+                    "updated_at": s.get("updated_ts") or s.get("last_written_ts"),
+                    "dir_name": s.get("dir_name") or "",
+                    "is_current_dir": bool(s.get("is_current_dir", True)),
+                    "model": s.get("model_id") or s.get("model") or self.current_model_id,
+                })
+        except Exception:
+            pass
+        if not entries:
+            entries.append({
+                "id": self.current_session_id,
+                "title": cur_title,
+                "is_current": True,
+                "msg_count": 0,
+                "turn_count": 0,
+                "tool_count": 0,
+                "updated_rel": "now",
+                "dir_name": os.path.basename(self.workdir.rstrip("\\/")) or "",
+                "is_current_dir": True,
+                "model": self.current_model_id,
+            })
+
+        self.push_screen(
+            ShareSessionModal(sessions=entries, current_session_id=self.current_session_id),
+            self._on_share_session_chosen,
+        )
+
+    def _on_share_session_chosen(self, chosen: Optional[Dict[str, Any]]) -> None:
+        if not chosen:
+            return
+        from ...core.tunnel import find_cloudflared
+        from ..modals.share_modal import CloudflaredInstallModal
+
+        if not find_cloudflared():
+            def _after_install(installed: bool) -> None:
+                if installed:
+                    self._launch_share_for_session(chosen)
+
+            self.push_screen(CloudflaredInstallModal(feature_name="/share"), _after_install)
+            return
+
+        self._launch_share_for_session(chosen)
+
+    def _launch_share_for_session(self, chosen: Dict[str, Any]) -> None:
+        from ...core.exporter import render_session_html
+        from ...core.tunnel import launch_tunnel_terminal, write_temp_share_html
+
+        sid = str(chosen.get("id") or self.current_session_id)
+        title = str(chosen.get("title") or sid)
+        if chosen.get("is_current"):
+            msgs = list(self.messages)
+            model_id = self.current_model_id
+            stats = dict(getattr(self, "stats", {}) or {})
+        else:
+            loaded = self.session_manager.load_session(sid) or {}
+            msgs = list(loaded.get("messages") or [])
+            meta = loaded.get("metadata") or {}
+            model_id = str(
+                loaded.get("model")
+                or loaded.get("model_id")
+                or meta.get("model")
+                or chosen.get("model")
+                or self.current_model_id
+            )
+            stats = dict(loaded.get("stats") or {})
+
+        html_doc = render_session_html(
+            session_id=sid,
+            messages=msgs,
+            stats=stats,
+            model_id=model_id,
+            workdir=self.workdir,
+            redact=True,
+        )
+        tmp_path = write_temp_share_html(html_doc, session_id=sid)
+        try:
+            proc = launch_tunnel_terminal(
+                mode="share",
+                share_html_path=tmp_path,
+                title=title,
+                session_id=sid,
+            )
+            self._share_procs.append(proc)
+            self.notify(
+                f"Sharing '{title}' in a new terminal with QR code & HTTPS link. Close that window or run /unshare to stop.",
+                title="Session Share",
+                timeout=6.0,
+            )
+        except Exception as exc:
+            self.notify(f"Failed to launch share terminal: {exc}", title="Share Error", severity="error", timeout=4.0)
+
+    def _cmd_unshare(self, arg: str = "") -> None:
+        procs = list(getattr(self, "_share_procs", []) or [])
+        stopped = 0
+        for p in procs:
+            if p is not None and p.poll() is None:
+                try:
+                    p.terminate()
+                    stopped += 1
+                except Exception:
+                    pass
+        self._share_procs = []
+        if stopped:
+            self.notify(f"Stopped {stopped} active share terminal(s).", title="Unshare", timeout=3.0)
+        else:
+            self.notify("No active share terminals running.", title="Unshare", timeout=2.5)
 
 
     def _cmd_system(self, arg: str = "") -> None:
@@ -1765,6 +1999,11 @@ class CommandsMixin:
             self.settings.config["default_provider"] = self.current_provider
             self.settings.config["default_model"] = self.current_model_id
             self.settings.save_config()
+            try:
+                from ...core.model_directory import record_recent_model
+                record_recent_model(self.current_provider, self.current_model_id)
+            except Exception:
+                pass
             self.update_meta_bars()
             if old_model != self.current_model_id and self.gguf_loader.llm is not None:
                 self.gguf_loader.unload()
