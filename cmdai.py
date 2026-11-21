@@ -336,6 +336,8 @@ def main():
     parser.add_argument("--workdir", default="", help="Target project working directory")
     parser.add_argument("--provider", default="", help="LLM Provider ID")
     parser.add_argument("--model", default="", help="Model ID")
+    parser.add_argument("--port", type=int, default=8787, help="Port for `cmdai code web` (default: 8787)")
+    parser.add_argument("--no-browser", action="store_true", help="Do not auto-open browser in `cmdai code web`")
     parser.add_argument("-p", "--prompt", default="", help="Run a single headless prompt and exit")
     parser.add_argument("--continue", dest="continue_session", action="store_true", help="Continue the latest session")
     parser.add_argument("--output-format", default="text", choices=["text", "json"], help="Headless output format")
@@ -367,6 +369,21 @@ def main():
     if args.command == "doctor" or (args.command == "code" and str(args.path or "").lower() == "doctor") or "code doctor" in args_joined:
         from cmdai.core.doctor import run_doctor
         sys.exit(run_doctor())
+
+    if args.command == "web" or (args.command == "code" and str(args.path or "").lower() == "web"):
+        from cmdai.core.web_runner import run_web_ui
+        # Do NOT force terminal CWD as workspace; let web_runner use saved workspace
+        # unless the user explicitly passed --workdir.
+        explicit_wd = os.path.abspath(args.workdir) if args.workdir else ""
+        sys.exit(
+            run_web_ui(
+                workdir=explicit_wd,
+                port=args.port,
+                open_browser=(not args.no_browser),
+                provider=args.provider,
+                model=args.model,
+            )
+        )
 
     if args.command in ("addlocal", "add-model", "code-addlocal") or "code addlocal" in args_joined:
         sys.exit(handle_add_local_model())
@@ -414,6 +431,7 @@ def main():
   \x1b[1;97mUsage\x1b[0m
   \x1b[90m────────────────────────────────────────────────────────────────\x1b[0m
     \x1b[36mcmdai code [dir]\x1b[0m               Launch CMDAI CODE in the workspace
+    \x1b[36mcmdai code web [--port 8787]\x1b[0m   Launch Rust-hosted CMDAI CODE Web UI locally
     \x1b[36mcmdai code help\x1b[0m                Show this CLI help without starting TUI
     \x1b[36mcmdai code doctor\x1b[0m              Run system, GPU, voice & API provider diagnostics
     \x1b[36mcmdai code editor [file]\x1b[0m       Open the built-in terminal code editor
@@ -446,6 +464,7 @@ def main():
     \x1b[36m/voicemodel\x1b[0m                    Configure offline Whisper or API voice dictation (F2)
     \x1b[36m/mode, /thinking, /params\x1b[0m      Switch auto/plan/code, reasoning level & gen params
     \x1b[36m/sessions, /new, /branch\x1b[0m       Manage, switch, or branch conversation sessions
+    \x1b[36m/tunnel, /share, /unshare\x1b[0m      Remote Rust Web UI (QR + Cloudflare) & session sharing
     \x1b[36m/git, /diff, /commit, /revert\x1b[0m  Inspect git diffs, commit, or revert checkpoints
     \x1b[36m/plan, /todo, /bg\x1b[0m              Manage task checklists & background subagents (Ctrl+B)
     \x1b[36m/ctx, /add, /drop, /memory\x1b[0m     Manage pinned context files & persistent memory

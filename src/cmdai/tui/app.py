@@ -421,6 +421,9 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
 
         self.gguf_loader = SimpleGGUFLoader()
         self.http_server: Optional[BackgroundHTTPServer] = None
+        self._tunnel_proc: Optional[Any] = None
+        self._share_procs: List[Any] = []
+        self._remote_stream_buffer: str = ""
 
         self.stats = {
             "tokens_in": 0,
@@ -546,6 +549,46 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
             self.abort_requested = True
         except Exception:
             pass
+        try:
+            if self._tunnel_proc is not None and self._tunnel_proc.poll() is None:
+                self._tunnel_proc.terminate()
+        except Exception:
+            pass
+        try:
+            if self.http_server is not None:
+                self.http_server.revoke_remote()
+        except Exception:
+            pass
+
+    # --- Remote Rust Web UI & Cloudflare Tunnel Hooks ---
+    def submit_remote_prompt(self, prompt: str) -> None:
+        text = (prompt or "").strip()
+        if not text:
+            return
+        self._handle_submit(text, from_hero=(not self.in_chat_mode))
+
+    def stop_remote_generation(self) -> None:
+        try:
+            self.abort_requested = True
+            if hasattr(self, "action_interrupt"):
+                self.action_interrupt()
+        except Exception:
+            pass
+
+    def set_remote_mode(self, mode: str) -> None:
+        normalized = "code" if mode == "chat" else mode
+        if normalized in ("auto", "plan", "code"):
+            self._cmd_mode(normalized)
+
+    def select_remote_model(self, provider_id: str, model_id: str) -> None:
+        self._on_model_selected((provider_id, model_id))
+
+    def select_remote_session(self, session_id: str) -> None:
+        if hasattr(self, "_on_session_selected"):
+            self._on_session_selected(session_id)
+
+    def new_remote_session(self) -> None:
+        self._cmd_new("")
 
     @on(ApprovalBar.ActionSelected)
     def on_approval_action_selected(self, msg: ApprovalBar.ActionSelected) -> None:

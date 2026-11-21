@@ -712,9 +712,11 @@ def _infer_thinking_from_id(model_id: str) -> bool:
     if not mid:
         return False
     tokens = set(re.split(r"[-_/:.\s]+", mid))
-    if tokens & {"r1", "qwq", "reason", "reasoner", "reasoning", "think", "thinking", "o1", "o3", "o4"}:
+    if tokens & {"r1", "qwq", "reason", "reasoner", "reasoning", "think", "thinking", "o1", "o3", "o4", "qwen3", "qwopus"}:
         return True
-    return any(k in mid for k in ("deepseek-r1", "qwq", "reasoning", "thinking"))
+    if re.search(r"(?:gemma[-_]?4|deepseek[-_]?r1|deepseek[-_]?v4|qwq|qwen3|qwopus|reasoning|thinking)", mid):
+        return True
+    return False
 
 
 def _infer_vision_from_id(model_id: str) -> bool:
@@ -1132,11 +1134,18 @@ def get_model_capability(
             # If an older name_heuristic cache entry recorded vision=False
             # before vision heuristics or server metadata were updated (e.g.
             # Gemma 4 via LocalLLMAPI), upgrade it instead of staying stuck.
-            if not cached_vis and src == "name_heuristic" and _infer_vision_from_id(model_id):
+            if not cached_vis and src in ("name_heuristic", "registered") and _infer_vision_from_id(model_id):
                 cached_vis = True
                 item = dict(item)
                 item["vision"] = True
                 item["image_param_style"] = "mmproj" if provider_id in ("local_gguf", "localllmapi") else "inline_base64"
+                cache[cache_key] = item
+            if not item.get("thinking", False) and src in ("name_heuristic", "registered") and _infer_thinking_from_id(model_id):
+                item = dict(item)
+                item["thinking"] = True
+                item["levels"] = list(item.get("levels") or ["low", "medium", "high"])
+                item["default_level"] = item.get("default_level") or "medium"
+                item["param_style"] = item.get("param_style") if item.get("param_style") not in (None, "", "none") else "chat_template_kwargs"
                 cache[cache_key] = item
                 _save_cache(cache)
             cap = _build_capability(
@@ -1399,12 +1408,12 @@ def get_model_capability(
         _persist(cache_key, cap)
         return cap
 
-    if "r1" in mid or "deepseek-reasoner" in mid or "qwq" in mid or "qwen3" in mid:
+    if _infer_thinking_from_id(model_id) or "deepseek-reasoner" in mid:
         cap = _build_capability(
             model_id,
             thinking=True,
-            param_style="reasoning_effort" if provider_id == "deepseek" else "tag_based",
-            levels=["low", "medium", "high", "extra", "max"],
+            param_style="reasoning_effort" if provider_id == "deepseek" else ("chat_template_kwargs" if "gemma" in mid else "tag_based"),
+            levels=["low", "medium", "high"] if "gemma" in mid else ["low", "medium", "high", "extra", "max"],
             default_level="medium",
             vision=has_vision,
             image_param_style="inline_base64" if has_vision else "none",
