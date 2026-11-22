@@ -4997,6 +4997,27 @@ body.is-resizing-split canvas {
   font-weight: 600;
 }
 
+.review-commit-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-hairline);
+  background: var(--bg-stage);
+  flex-shrink: 0;
+}
+.review-commit-bar input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  padding: 6px 10px;
+}
+.ed-action-btn.danger-soft:hover {
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+
 .subapp-term-body {
   padding: 12px 14px;
   gap: 10px;

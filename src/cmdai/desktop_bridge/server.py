@@ -1323,6 +1323,69 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
             diff_txt = proc2.stdout or ""
         return {"ok": True, **summary, "diff": diff_txt[:120000]}
 
+    @app.post("/api/git/stage")
+    def git_stage(payload: Dict[str, Any]) -> Dict[str, Any]:
+        wd: Path = state["workdir"]
+        git_target = _resolve_git_root(wd, resolved_root)
+        if not git_target:
+            raise HTTPException(status_code=400, detail="No Git repository in workspace")
+        fp = str((payload or {}).get("file_path") or "").strip().replace("\\", "/")
+        cmd = ["git", "-c", "safe.directory=*", "add", "--", fp] if fp else ["git", "-c", "safe.directory=*", "add", "-A"]
+        proc = subprocess.run(cmd, cwd=str(git_target), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
+        if proc.returncode != 0:
+            raise HTTPException(status_code=400, detail=(proc.stderr or proc.stdout or "git add failed").strip())
+        return {"ok": True, **_git_status_summary(wd, resolved_root)}
+
+    @app.post("/api/git/discard")
+    def git_discard(payload: Dict[str, Any]) -> Dict[str, Any]:
+        wd: Path = state["workdir"]
+        git_target = _resolve_git_root(wd, resolved_root)
+        if not git_target:
+            raise HTTPException(status_code=400, detail="No Git repository in workspace")
+        fp = str((payload or {}).get("file_path") or "").strip().replace("\\", "/")
+        if not fp:
+            raise HTTPException(status_code=400, detail="Specify file_path to discard")
+        target_abs = (git_target / fp).resolve()
+        if not str(target_abs).startswith(str(git_target.resolve())):
+            raise HTTPException(status_code=400, detail="Path outside repository")
+        # Check if tracked by git
+        chk = subprocess.run(
+            ["git", "-c", "safe.directory=*", "ls-files", "--error-unmatch", "--", fp],
+            cwd=str(git_target), capture_output=True, text=True, timeout=10,
+        )
+        if chk.returncode == 0:
+            subprocess.run(["git", "-c", "safe.directory=*", "reset", "HEAD", "--", fp], cwd=str(git_target), capture_output=True, timeout=10)
+            proc = subprocess.run(
+                ["git", "-c", "safe.directory=*", "checkout", "--", fp],
+                cwd=str(git_target), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+            )
+            if proc.returncode != 0:
+                raise HTTPException(status_code=400, detail=(proc.stderr or proc.stdout or "git checkout failed").strip())
+        else:
+            if target_abs.is_file():
+                target_abs.unlink()
+        return {"ok": True, **_git_status_summary(wd, resolved_root)}
+
+    @app.post("/api/git/commit")
+    def git_commit(payload: Dict[str, Any]) -> Dict[str, Any]:
+        wd: Path = state["workdir"]
+        git_target = _resolve_git_root(wd, resolved_root)
+        if not git_target:
+            raise HTTPException(status_code=400, detail="No Git repository in workspace")
+        msg = str((payload or {}).get("message") or "").strip()
+        if not msg:
+            raise HTTPException(status_code=400, detail="Commit message is required")
+        stage_all = bool((payload or {}).get("stage_all", True))
+        if stage_all:
+            subprocess.run(["git", "-c", "safe.directory=*", "add", "-A"], cwd=str(git_target), capture_output=True, timeout=15)
+        proc = subprocess.run(
+            ["git", "-c", "safe.directory=*", "commit", "-m", msg],
+            cwd=str(git_target), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
+        )
+        if proc.returncode != 0:
+            raise HTTPException(status_code=400, detail=(proc.stderr or proc.stdout or "git commit failed").strip())
+        return {"ok": True, "output": (proc.stdout or "").strip(), **_git_status_summary(wd, resolved_root)}
+
     @app.get("/api/workspace/info")
     def workspace_info() -> Dict[str, Any]:
         wd: Path = state["workdir"]

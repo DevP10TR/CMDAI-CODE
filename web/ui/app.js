@@ -4668,6 +4668,70 @@ function bindEvents() {
   document.getElementById("btn-review-refresh")?.addEventListener("click", () => {
     loadReviewSubApp(state.reviewSelectedPath || "");
   });
+  document.getElementById("btn-review-stage")?.addEventListener("click", async () => {
+    const fp = state.reviewSelectedPath || "";
+    try {
+      const resp = await fetch("/api/git/stage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_path: fp }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) return toast(data.detail || "Stage failed");
+      toast(fp ? `Staged ${fp}` : "Staged all changes");
+      await loadReviewSubApp(fp);
+    } catch (err) {
+      toast(`Stage failed: ${err.message}`);
+    }
+  });
+  document.getElementById("btn-review-discard")?.addEventListener("click", async () => {
+    const fp = state.reviewSelectedPath || "";
+    if (!fp) return toast("Select a modified file to discard first");
+    if (!window.confirm(`Discard all uncommitted changes in "${fp}"?`)) return;
+    try {
+      const resp = await fetch("/api/git/discard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_path: fp }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) return toast(data.detail || "Discard failed");
+      toast(`Reverted ${fp}`);
+      state.reviewSelectedPath = "";
+      await loadReviewSubApp("");
+      await refreshTree();
+    } catch (err) {
+      toast(`Discard failed: ${err.message}`);
+    }
+  });
+  const doReviewCommit = async () => {
+    const inp = document.getElementById("review-commit-msg");
+    const msg = (inp?.value || "").trim();
+    if (!msg) return toast("Enter a commit message first");
+    try {
+      const resp = await fetch("/api/git/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg, stage_all: true }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) return toast(data.detail || "Commit failed");
+      if (inp) inp.value = "";
+      toast(`Committed: ${msg.slice(0, 48)}`);
+      state.reviewSelectedPath = "";
+      await loadReviewSubApp("");
+      await refreshBootstrap();
+    } catch (err) {
+      toast(`Commit failed: ${err.message}`);
+    }
+  };
+  document.getElementById("btn-review-commit")?.addEventListener("click", doReviewCommit);
+  document.getElementById("review-commit-msg")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      doReviewCommit();
+    }
+  });
   document.getElementById("btn-review-open-editor")?.addEventListener("click", async () => {
     const p = state.reviewSelectedPath || state.filePaths[0];
     await openSecondaryPanel("files");

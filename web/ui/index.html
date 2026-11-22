@@ -9,7 +9,7 @@
   <meta name="theme-color" id="meta-theme-color" content="#f4f5f7" />
   <title>CMDAI CODE</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2318181b'/%3E%3Cpath d='M7 9h7v3H10v8h4v3H7V9zm11 0h7v3h-4v8h4v3h-7V9z' fill='%23ffffff'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="/styles.css?v=20261122w" />
+  <link rel="stylesheet" href="/styles.css?v=20261122x" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" crossorigin="anonymous" />
   <script defer src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js" crossorigin="anonymous"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js" crossorigin="anonymous"></script>
@@ -816,6 +816,8 @@
                 <span id="review-git-meta" class="subapp-meta">Checking git status...</span>
               </div>
               <div class="subapp-header-actions">
+                <button id="btn-review-stage" class="ed-action-btn compact" title="Stage selected file (or all)">Stage</button>
+                <button id="btn-review-discard" class="ed-action-btn compact danger-soft" title="Discard changes in selected file">Discard</button>
                 <button id="btn-review-refresh" class="ed-action-btn compact">Refresh</button>
                 <button id="btn-review-open-editor" class="ed-action-btn compact">Open in Editor</button>
                 <button class="ed-action-btn compact btn-subapp-maximize"><span>Full Window</span></button>
@@ -823,6 +825,10 @@
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
                 </button>
               </div>
+            </div>
+            <div class="review-commit-bar">
+              <input id="review-commit-msg" type="text" class="glass-input" placeholder="Commit message (e.g. feat: add new component)..." />
+              <button id="btn-review-commit" class="ed-action-btn compact primary">Commit</button>
             </div>
             <div class="subapp-body review-split-body">
               <aside class="review-files-sidebar">
@@ -1488,8 +1494,8 @@
 
   <div id="toast-container" class="toast-container"></div>
 
-  <script type="module" src="/editor.js?v=20261122v"></script>
-  <script type="module" src="/map.js?v=20261122v"></script>
-  <script type="module" src="/app.js?v=20261122v"></script>
+  <script type="module" src="/editor.js?v=20261122x"></script>
+  <script type="module" src="/map.js?v=20261122x"></script>
+  <script type="module" src="/app.js?v=20261122x"></script>
 </body>
 </html>
