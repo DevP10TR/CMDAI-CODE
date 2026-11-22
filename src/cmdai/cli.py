@@ -454,6 +454,8 @@ def handle_add_local_model():
 CLI_HELP = """
   [bold]Usage[/]
     cmdai code [target]            launch the app (default)
+    cmdai code web [--port 8787]   launch Rust-hosted Web UI locally
+    cmdai code tunnel              open Remote Tunnel (QR + PIN) in a new terminal
     cmdai code help | -h | --help  show this help
     cmdai editor [folder]          CMDAI EDITOR: pick/create a project,
                                    or open <folder> right away
@@ -625,6 +627,19 @@ def main():
 
     if "update" in words:
         sys.exit(handle_update())
+
+    if "tunnel" in words or "tunel" in words:
+        import secrets
+        from .core.tunnel import find_cloudflared, launch_tunnel_terminal
+        if not find_cloudflared():
+            print("[!] cloudflared is not installed. Run /tunnel inside CMDAI CODE once to auto-install it.")
+            sys.exit(1)
+        tok = secrets.token_urlsafe(18)
+        pin = f"{secrets.randbelow(1_000_000):06d}"
+        launch_tunnel_terminal(mode="tunnel", token=tok, pin=pin)
+        print(f"  ⌬  CMDAI CODE Remote Tunnel opened in a new terminal window (PIN: {pin}).")
+        print("     Close that terminal window or press [Q] inside it to disconnect.")
+        sys.exit(0)
 
     if "addlocal" in words or "add-model" in words:
         sys.exit(handle_add_local_model())

@@ -240,6 +240,20 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "browser",
+        "description": "Launch the isolated autonomous Browser Subagent (separate context, unlimited steps until browser_stop) to open a URL OR a local static HTML file path (e.g. 'src/index.html' — auto-served on a random free local port, no backend needed!), click through every requested section, check JS console errors, visually inspect screenshots, and return ONE complete report.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Target URL (e.g. http://127.0.0.1:1010) OR local file path inside workspace (e.g. src/index.html, index.html)"},
+                "task": {"type": "string", "description": "Complete instructions for the Browser Subagent (everything to click, test, and evaluate)"},
+                "port": {"type": "integer", "description": "Optional preferred local port when serving a static HTML file (omit to automatically pick a random unused local port)"},
+                "device": {"type": "string", "enum": ["mobile", "tablet"], "description": "ONLY set this when testing a mobile/tablet view ('mobile' = 390x844 smartphone with touch, 'tablet' = 768x1024). Omit completely for normal PC/desktop view."},
+            },
+            "required": ["url", "task"],
+        },
+    },
 ]
 
 
@@ -249,9 +263,17 @@ _PLAN_DISABLED_TOOLS = frozenset({"write", "edit", "multi_edit", "command"})
 def get_native_tool_schemas(mode: str = "auto") -> List[Dict[str, Any]]:
     """Return list of standard JSON Schema tool objects formatted for OpenAI/OpenRouter/Anthropic API calls."""
     is_plan = str(mode or "auto").strip().lower() == "plan"
+    browser_on = False
+    try:
+        from ..core.settings import get_settings
+        browser_on = bool((get_settings().config.get("browser") or {}).get("enabled", False))
+    except Exception:
+        pass
     schemas = []
     for tool in TOOL_DEFINITIONS:
         if is_plan and tool.get("name") in _PLAN_DISABLED_TOOLS:
+            continue
+        if tool.get("name") == "browser" and not browser_on:
             continue
         schemas.append({
             "type": "function",

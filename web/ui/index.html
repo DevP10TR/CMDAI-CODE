@@ -2,11 +2,17 @@
 <html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" id="meta-theme-color" content="#f4f5f7" />
   <title>CMDAI CODE</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2318181b'/%3E%3Cpath d='M7 9h7v3H10v8h4v3H7V9zm11 0h7v3h-4v8h4v3h-7V9z' fill='%23ffffff'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="/styles.css?v=20261117j" />
+  <link rel="stylesheet" href="/styles.css?v=20261122w" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" crossorigin="anonymous" />
+  <script defer src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
   <!-- OPAQUE MINIMALIST SPLASH SCREEN -->
@@ -77,12 +83,16 @@
           </button>
         </div>
       </aside>
+      <div id="mobile-sidebar-backdrop" class="mobile-sidebar-backdrop" aria-hidden="true"></div>
 
       <!-- MAIN CANVAS -->
       <div class="main-canvas-card">
         <!-- Cohesive Clear Top Bar: Sidebar expand toggle, Open Chat Tabs, Overview -->
         <header class="stage-topbar">
           <div class="stage-topbar-left">
+            <button id="btn-mobile-menu" class="mobile-menu-btn" type="button" title="Menu" aria-label="Open navigation menu">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l16 0"/><path d="M4 12l16 0"/><path d="M4 18l16 0"/></svg>
+            </button>
             <button id="btn-expand-sidebar" class="expand-brand-btn hidden" title="Show sidebar">
               <span id="expand-cc-host" class="cc-vector-badge sm" aria-label="CC"></span>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"/><path d="M9 4v16"/><path d="M14 10l2 2l-2 2"/></svg>
@@ -133,6 +143,10 @@
                 <button class="ov-item" data-ov-action="tasks">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3l8 -8"/><path d="M20 12v6a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h9"/></svg>
                   <span>Background Tasks</span>
+                </button>
+                <button class="ov-item" data-ov-action="browser">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8"/><path d="M3.6 15h16.8"/><path d="M11.5 3a17 17 0 0 0 0 18"/><path d="M12.5 3a17 17 0 0 1 0 18"/></svg>
+                  <span>Browser Preview</span>
                 </button>
               </div>
             </div>
@@ -821,27 +835,36 @@
             </div>
           </section>
 
-          <!-- SUB-APP 4: WORKSPACE TERMINAL -->
+          <!-- SUB-APP 4: WORKSPACE TERMINAL (Interactive PTY) -->
           <section id="view-terminal" class="view-pane subapp-pane" data-subapp="terminal">
             <div class="subapp-header">
               <div class="subapp-header-left">
                 <span class="map-badge">SHELL</span>
                 <h3 class="subapp-title">Workspace Terminal</h3>
+                <span id="pty-status-pill" class="pty-status-pill">
+                  <span class="pty-status-dot"></span>
+                  <span id="pty-status-text">Connecting...</span>
+                </span>
               </div>
               <div class="subapp-header-actions">
-                <button id="btn-subapp-terminal-clear" class="ed-action-btn compact">Clear</button>
+                <button id="btn-pty-ctrlc" class="ed-action-btn compact" title="Send Ctrl+C (SIGINT)">Ctrl+C</button>
+                <button id="btn-pty-restart" class="ed-action-btn compact" title="Restart shell in active workspace">Restart</button>
+                <button id="btn-subapp-terminal-clear" class="ed-action-btn compact" title="Clear screen">Clear</button>
                 <button class="ed-action-btn compact btn-subapp-maximize"><span>Full Window</span></button>
                 <button class="sb-icon-tiny btn-subapp-close" title="Close Terminal Sub-App">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
                 </button>
               </div>
             </div>
-            <div class="subapp-body subapp-term-body">
-              <div id="subapp-terminal-output" class="subapp-term-output"></div>
-              <div class="subapp-term-input-row">
-                <span class="term-prompt">&gt;</span>
-                <input id="subapp-terminal-input" type="text" class="terminal-input" placeholder="Run command in active workspace (e.g. git status, pytest, ls)..." />
-                <button id="btn-subapp-terminal-run" class="ed-action-btn compact primary">Run</button>
+            <div class="subapp-body subapp-term-body pty-term-body">
+              <div id="pty-terminal-host" class="pty-terminal-host" tabindex="0"></div>
+              <div id="pty-fallback-wrap" class="pty-fallback-wrap hidden">
+                <pre id="subapp-terminal-output" class="subapp-term-output"></pre>
+                <div class="subapp-term-input-row">
+                  <span class="term-prompt">&gt;</span>
+                  <input id="subapp-terminal-input" type="text" class="terminal-input" placeholder="Type command and press Enter (offline fallback)..." />
+                  <button id="btn-subapp-terminal-run" class="ed-action-btn compact primary">Send</button>
+                </div>
               </div>
             </div>
           </section>
@@ -910,6 +933,75 @@
             <div id="subagent-pane-body" class="subapp-body subapp-pad" style="display:flex;flex-direction:column;gap:14px;overflow-y:auto;"></div>
           </section>
 
+          <!-- SUB-APP 6C: HEADLESS BROWSER CONTROL & LIVE PREVIEW -->
+          <section id="view-browser" class="view-pane subapp-pane" data-subapp="browser">
+            <div class="subapp-header">
+              <div class="subapp-header-left">
+                <span class="map-badge">BROWSER</span>
+              </div>
+              <div class="subapp-header-actions" style="flex-shrink:0;">
+                <button id="btn-browser-take-control" class="ed-action-btn compact" type="button" title="Take manual control of the browser">Take Control</button>
+                <button id="btn-browser-stop" class="ed-action-btn compact" type="button" title="Close headless browser">Stop</button>
+                <button class="ed-action-btn compact btn-subapp-maximize" type="button"><span>Full Window</span></button>
+                <button class="sb-icon-tiny btn-subapp-close" type="button" title="Close Browser Preview">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="browser-omnibox-bar">
+              <button id="btn-browser-reload" class="sb-icon-tiny" type="button" title="Reload page">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"/></svg>
+              </button>
+              <div class="browser-omnibox-pill">
+                <img id="browser-omnibox-fav" class="browser-omnibox-fav hidden" alt="" />
+                <svg id="browser-omnibox-globe" class="omnibox-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8"/><path d="M3.6 15h16.8"/><path d="M11.5 3a17 17 0 0 0 0 18"/><path d="M12.5 3a17 17 0 0 1 0 18"/></svg>
+                <input id="browser-url-input" class="browser-omnibox-input" type="text" placeholder="Enter URL (e.g. http://127.0.0.1:3000)..." />
+                <button id="btn-browser-go" class="browser-omnibox-go" type="button" title="Navigate">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6l-6 6"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="subapp-body" style="display:flex;flex-direction:column;min-height:0;background:var(--bg-app);">
+              <div id="browser-viewport-wrap" class="browser-viewport-wrap">
+                <div id="browser-empty-state" class="browser-empty-state">
+                  <div class="browser-empty-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8"/><path d="M3.6 15h16.8"/><path d="M11.5 3a17 17 0 0 0 0 18"/><path d="M12.5 3a17 17 0 0 1 0 18"/></svg>
+                  </div>
+                  <div style="font-size:14px;font-weight:600;color:var(--text-primary);margin-bottom:5px;">Headless Browser Studio</div>
+                  <div style="font-size:12.3px;color:var(--text-secondary);max-width:340px;text-align:center;line-height:1.5;margin-bottom:14px;">
+                    Runs silently in the background without moving your physical mouse. Enter a URL above or pick a quick target:
+                  </div>
+                  <div class="browser-quick-chips">
+                    <button class="browser-chip" data-quick-url="http://127.0.0.1:3000" type="button">localhost:3000</button>
+                    <button class="browser-chip" data-quick-url="http://127.0.0.1:5173" type="button">localhost:5173</button>
+                    <button class="browser-chip" data-quick-url="http://127.0.0.1:8787" type="button">localhost:8787</button>
+                  </div>
+                </div>
+                <div id="browser-summary-card" class="browser-summary-card hidden"></div>
+                <div id="browser-frame-stage" class="browser-frame-stage hidden">
+                  <img id="browser-frame-img" class="browser-frame-img" alt="Headless Browser Live Preview" draggable="false" />
+                  <div id="browser-tap-burst" class="browser-tap-burst"></div>
+                  <div id="browser-ai-cursor" class="browser-ai-cursor">
+                    <svg class="browser-cursor-svg" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M 2,3.0 C 2,1.1 4.1,0.3 5.5,1.5 L 18.0,12.2 C 19.6,13.6 18.8,16.2 16.7,16.4 L 11.8,16.7 C 10.1,16.8 8.6,17.5 7.4,18.7 L 5.0,21.0 C 3.6,22.3 2,21.3 2,19.4 Z" fill="#09090b" stroke="#ffffff" stroke-width="2.0" stroke-linejoin="round" stroke-linecap="round"/>
+                    </svg>
+                    <div id="browser-whisper-pill" class="browser-whisper-pill hidden">
+                      <span class="whisper-dots"><i></i><i></i><i></i></span>
+                      <span id="browser-whisper-text">Thinking</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <details id="browser-console-bar" class="browser-console-bar">
+                <summary class="browser-console-head">
+                  <span>Console</span>
+                  <span id="browser-console-badge" class="cap-tag">0 errors</span>
+                </summary>
+                <div id="browser-console-list" class="browser-console-list"></div>
+              </details>
+            </div>
+          </section>
+
           <!-- SUB-APP 7: MCP SERVERS -->
           <section id="view-mcp" class="view-pane subapp-pane" data-subapp="mcp">
             <div class="subapp-header">
@@ -944,7 +1036,7 @@
   <!-- LARGER ANTIGRAVITY SETTINGS & PROJECT WINDOW -->
   <div id="settings-overlay" class="modal-overlay hidden">
     <div class="ag-modal-dialog animate-pop">
-      <aside class="ag-modal-sidebar">
+      <aside id="settings-modal-sidebar" class="ag-modal-sidebar">
         <div class="ag-sb-group-head">Settings</div>
         <div class="ag-sb-nav">
           <button class="ag-sb-item settings-tab active" data-stab="agent">Agent &amp; Generation</button>
@@ -959,8 +1051,15 @@
         <div id="settings-projects-nav" class="ag-sb-nav scrollable-short"></div>
         <button id="btn-settings-add-project" class="ag-sb-add-proj-btn">+ Add Project</button>
       </aside>
+      <div id="settings-mobile-backdrop" class="settings-mobile-backdrop" aria-hidden="true"></div>
 
       <div class="ag-modal-main">
+        <div class="settings-mobile-bar">
+          <button id="btn-settings-mobile-menu" class="mobile-menu-btn" type="button" aria-label="Open Settings Menu">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l16 0"/><path d="M4 12l16 0"/><path d="M4 18l16 0"/></svg>
+          </button>
+          <span class="settings-mobile-title">Settings</span>
+        </div>
         <button id="btn-close-settings" class="ag-modal-close" title="Close Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
         </button>
@@ -986,6 +1085,13 @@
                   <div class="ag-row-desc">Attach structural /map outline to agent turns automatically.</div>
                 </div>
                 <input id="set-auto-repomap" type="checkbox" class="toggle-check" checked />
+              </div>
+              <div class="ag-card-row">
+                <div>
+                  <div class="ag-row-title">Browser Control (Headless)</div>
+                  <div class="ag-row-desc">Let the agent open, click, and inspect web apps in an isolated background browser without touching your mouse.</div>
+                </div>
+                <input id="set-browser-enabled" type="checkbox" class="toggle-check" />
               </div>
             </div>
 
@@ -1382,8 +1488,8 @@
 
   <div id="toast-container" class="toast-container"></div>
 
-  <script type="module" src="/editor.js?v=20261117j"></script>
-  <script type="module" src="/map.js?v=20261117j"></script>
-  <script type="module" src="/app.js?v=20261117j"></script>
+  <script type="module" src="/editor.js?v=20261122v"></script>
+  <script type="module" src="/map.js?v=20261122v"></script>
+  <script type="module" src="/app.js?v=20261122v"></script>
 </body>
 </html>

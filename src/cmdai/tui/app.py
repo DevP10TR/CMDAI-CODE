@@ -497,6 +497,22 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
             pass
 
         try:
+            from ..browser import get_browser_engine
+            eng = get_browser_engine()
+            def _on_b_state(st: Dict[str, Any]) -> None:
+                try:
+                    self.call_from_thread(self._update_browser_meta_indicator, st)
+                except Exception:
+                    try:
+                        self._update_browser_meta_indicator(st)
+                    except Exception:
+                        pass
+            eng.add_listener(_on_b_state)
+            self._update_browser_meta_indicator(eng.get_state())
+        except Exception:
+            pass
+
+        try:
             import signal
             def _sigint_handler(s, f):
                 try:
@@ -628,6 +644,37 @@ class CMDAICodeTUI(UIMixin, SessionsMixin, CommandsMixin, WorkerMixin, App):
     @on(events.Click, "#hero-meta-thinking")
     def on_thinking_clicked(self, event: events.Click) -> None:
         super().on_thinking_clicked(event)
+
+    @on(events.Click, "#input-meta-browser")
+    @on(events.Click, "#hero-meta-browser")
+    def on_browser_meta_clicked(self, event: events.Click) -> None:
+        event.stop()
+        try:
+            from ..browser import open_live_browser_viewer
+            url = open_live_browser_viewer()
+            self.notify(f"Opened Live Browser Viewer: {url}", title="Browser", timeout=3.0)
+        except Exception as exc:
+            self.notify(f"Browser viewer error: {exc}", title="Browser", severity="error", timeout=4.0)
+
+    def _update_browser_meta_indicator(self, state_dict: Optional[Dict[str, Any]] = None) -> None:
+        running = bool((state_dict or {}).get("running", False))
+        lbl = "[#3fb950]●[/] [b #e6edf3]browser[/] [dim]· click to open[/]" if running else ""
+        for wid, sep_id in (
+            ("#hero-meta-browser", "#hero-meta-browser-sep"),
+            ("#input-meta-browser", "#input-meta-browser-sep"),
+        ):
+            try:
+                w = self.query_one(wid, Static)
+                sep = self.query_one(sep_id, Static)
+                if running:
+                    w.update(lbl)
+                    w.remove_class("hidden")
+                    sep.remove_class("hidden")
+                else:
+                    w.add_class("hidden")
+                    sep.add_class("hidden")
+            except Exception:
+                pass
 
     @on(events.Click, "#input-meta-mic")
     @on(events.Click, "#hero-meta-mic")

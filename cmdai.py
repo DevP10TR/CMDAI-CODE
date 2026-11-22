@@ -385,6 +385,24 @@ def main():
             )
         )
 
+    if args.command in ("tunnel", "tunel") or (args.command == "code" and str(args.path or "").lower() in ("tunnel", "tunel")):
+        import secrets
+        from cmdai.core.tunnel import find_cloudflared, launch_tunnel_terminal
+        if not find_cloudflared():
+            print("[!] cloudflared is not installed. Run /tunnel inside CMDAI CODE once to auto-install it.")
+            sys.exit(1)
+        if args.workdir:
+            try:
+                os.chdir(os.path.abspath(args.workdir))
+            except Exception:
+                pass
+        tok = secrets.token_urlsafe(18)
+        pin = f"{secrets.randbelow(1_000_000):06d}"
+        launch_tunnel_terminal(mode="tunnel", token=tok, pin=pin)
+        print(f"  ⌬  CMDAI CODE Remote Tunnel opened in a new terminal window (PIN: {pin}).")
+        print("     Close that terminal window or press [Q] inside it to disconnect.")
+        sys.exit(0)
+
     if args.command in ("addlocal", "add-model", "code-addlocal") or "code addlocal" in args_joined:
         sys.exit(handle_add_local_model())
 
@@ -432,6 +450,7 @@ def main():
   \x1b[90m────────────────────────────────────────────────────────────────\x1b[0m
     \x1b[36mcmdai code [dir]\x1b[0m               Launch CMDAI CODE in the workspace
     \x1b[36mcmdai code web [--port 8787]\x1b[0m   Launch Rust-hosted CMDAI CODE Web UI locally
+    \x1b[36mcmdai code tunnel\x1b[0m              Open Remote Tunnel (QR + PIN) in a new terminal
     \x1b[36mcmdai code help\x1b[0m                Show this CLI help without starting TUI
     \x1b[36mcmdai code doctor\x1b[0m              Run system, GPU, voice & API provider diagnostics
     \x1b[36mcmdai code editor [file]\x1b[0m       Open the built-in terminal code editor

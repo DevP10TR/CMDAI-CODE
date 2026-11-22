@@ -1992,6 +1992,9 @@ class ToolBlock(Vertical):
                     pass
             target = ("  " + str(target).strip()) if str(target).strip() else ""
         is_exp = self.is_expanded if self.is_tool_expandable() else False
+        if (self.tool_name or "").lower().strip() == "browser":
+            t_clean = str(target or "").strip()
+            target = f"{t_clean}  · click to open" if t_clean else "click to open"
         text = render_tool_header(
             self.tool_name,
             target,
@@ -2687,6 +2690,18 @@ class ToolBlock(Vertical):
                 except Exception as ex:
                     if app and hasattr(app, "notify"):
                         app.notify(f"Could not open subagent: {ex}", severity="error")
+            return
+        if tl == "browser":
+            event.stop()
+            event.prevent_default()
+            try:
+                from ...browser import open_live_browser_viewer
+                url = open_live_browser_viewer()
+                app = getattr(self, "app", None)
+                if app and hasattr(app, "notify"):
+                    app.notify(f"Opened CMDAI Browser: {url}", title="Browser", timeout=2.5)
+            except Exception:
+                pass
             return
 
         # Clicking the background shortcut hint sends non-subagent tasks to background

@@ -19,6 +19,7 @@ dependencies = [
   "gguf>=0.10.0",
   "sounddevice>=0.4.6",
   "faster-whisper>=1.0.0",
+  "pywinpty>=2.0.0; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

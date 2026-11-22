@@ -1539,6 +1539,48 @@ class AgentRunner:
                     self.on_tool_finish("web", target, res)
                 return res
 
+            elif name == "browser":
+                from .tools import tool_browser
+                task_arg = str(args.get("task") or args.get("goal") or "").strip()
+                url_arg = str(args.get("url") or args.get("path") or args.get("file") or "").strip()
+                port_raw = args.get("port")
+                port_arg = int(port_raw) if port_raw not in (None, "") and str(port_raw).strip().isdigit() else None
+                device_arg = str(args.get("device") or args.get("viewport") or "desktop").strip().lower()
+                action = str(args.get("action") or ("run" if (task_arg or url_arg) else "snapshot")).strip()
+                if action == "open" and task_arg:
+                    action = "run"
+                sel_arg = str(args.get("selector") or "").strip()
+                txt_arg = str(args.get("text") or "")
+                dir_arg = str(args.get("direction") or "down").strip()
+                submit_arg = str(args.get("submit", "")).strip().lower() in ("true", "1", "yes")
+                idx_raw = args.get("index")
+                idx_arg = int(idx_raw) if idx_raw not in (None, "") and str(idx_raw).isdigit() else None
+                x_raw, y_raw = args.get("x"), args.get("y")
+                x_arg = int(float(x_raw)) if x_raw not in (None, "") else None
+                y_arg = int(float(y_raw)) if y_raw not in (None, "") else None
+                target_lbl = url_arg or f"{action} {sel_arg or (f'#{idx_arg}' if idx_arg else '')}".strip()
+                if notify and self.on_tool_start:
+                    self.on_tool_start("browser", target_lbl)
+                res = tool_browser(
+                    ctx,
+                    action=action,
+                    url=url_arg,
+                    task=task_arg,
+                    port=port_arg,
+                    device=device_arg,
+                    selector=sel_arg,
+                    index=idx_arg,
+                    text=txt_arg,
+                    direction=dir_arg,
+                    submit=submit_arg,
+                    x=x_arg,
+                    y=y_arg,
+                )
+                done_lbl = f"{url_arg} ({res.get('steps_count', 0)} steps)" if res.get("steps_count") else target_lbl
+                if notify and self.on_tool_finish:
+                    self.on_tool_finish("browser", done_lbl, res)
+                return res
+
             elif name in ("scratch", "todo", "tasks"):
                 action = args.get("action", "add")
                 note = args.get("note", "")
@@ -2097,6 +2139,30 @@ class AgentRunner:
                     lines.append(f"Stdout:\n{res['stdout']}")
                 if res.get("stderr"):
                     lines.append(f"Stderr:\n{res['stderr']}")
+        elif name == "browser":
+            if res.get("summary"):
+                lines.append(f"Browser Agent Report ({res.get('steps_count', 0)} steps on {res.get('url', '')}):")
+                lines.append(str(res["summary"]))
+                if res.get("steps"):
+                    lines.append("Steps performed: " + " -> ".join(str(s) for s in res["steps"][:12]))
+            elif res.get("url"):
+                lines.append(f"Browser URL: {res.get('url')} | Title: {res.get('title', '')}")
+            if res.get("clicked"):
+                c = res["clicked"]
+                lines.append(f"Clicked: {c.get('label', '')} at ({c.get('x')}, {c.get('y')})")
+            if res.get("typed"):
+                lines.append(f"Typed: {res.get('typed')}")
+            if res.get("elements"):
+                lines.append("Interactive elements:")
+                for el in res["elements"][:25]:
+                    lines.append(f"  [{el.get('index')}] <{el.get('tag')}{el.get('id', '')}> {el.get('text', '')}")
+            errs = res.get("console_errors") or res.get("logs") or []
+            if errs:
+                lines.append("Browser console:")
+                for e in errs[:12]:
+                    lines.append(f"  [{e.get('level', 'log')}] {e.get('text', '')}")
+            if res.get("path"):
+                lines.append(f"Screenshot saved: {res.get('path')}")
         elif name == "web":
             results = res.get("results", [])
             if results:
@@ -2431,10 +2497,29 @@ def get_agent_system_prompt(workdir: str = ".", mode: str = "auto", vision: bool
             repo_map_section = f"\n\n### REPOSITORY AST MAP (STATIC OVERVIEW)\n```text\n{rmap}\n```"
     except Exception:
         repo_map_section = ""
+    browser_section = ""
+    try:
+        from ..core.settings import get_settings
+        if bool((get_settings().config.get("browser") or {}).get("enabled", False)):
+            browser_section = (
+                "\n\n### AUTONOMOUS BROWSER SUBAGENT (ENABLED — SEPARATE CONTEXT)\n"
+                "- Whenever the user asks you to open, preview, test, click through, or visually inspect a web page/app, make ONE SINGLE call:\n"
+                "  `<tool:browser url=\"src/index.html\" task=\"Detailed goal of everything to click, test, and inspect\" />`\n"
+                "- **Static frontend apps (index.html / src/index.html with NO backend/server):** NEVER say you cannot run the app because there is no server code! "
+                "Just pass the local file path directly (e.g. `url=\"src/index.html\"` or `url=\"index.html\"`) — `browser` automatically starts a built-in local HTTP server on a random free port (or on `port=\"1010\"` / `url=\"http://127.0.0.1:1010\"` if the user requested a specific port).\n"
+                "- **Mobile view:** ONLY pass `device=\"mobile\"` (390×844 smartphone with touch) when the user asks for mobile/phone view; omit `device` completely for normal PC/desktop view.\n"
+                "- This launches an isolated Browser Subagent with its own context and unlimited steps (it stops via `browser_stop` when done). "
+                "All live thinking appears next to the virtual cursor, keeping the main chat completely clean.\n"
+                "- Do NOT narrate individual clicks in the main chat — invoke `<tool:browser ... />` ONCE and present the final report.\n"
+            )
+    except Exception:
+        browser_section = ""
+
     return (
         f"\n\n### AUTONOMOUS CODE AGENT ({mode_clean.upper()} MODE) IN WORKSPACE: `{abs_work}`\n"
         f"{mode_section}\n\n"
         f"{tools_block}"
+        f"{browser_section}"
         f"{directives_block}"
         f"{project_rules}"
         f"{repo_map_section}"

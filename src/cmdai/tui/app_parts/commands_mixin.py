@@ -134,7 +134,7 @@ class CommandsMixin:
                 "/ctx", "/add", "/mode", "/thinking",
                 "/cd", "/changelog", "/update", "/updatesettings", "/mcp",
                 "/custom", "/plugins", "/memory", "/map",
-                "/tunnel", "/tunel", "/share", "/unshare"
+                "/tunnel", "/tunel", "/share", "/unshare", "/browser"
             )
             if cmd in modal_cmds:
                 pass
@@ -234,6 +234,7 @@ class CommandsMixin:
             "/tunel": self._cmd_tunnel,
             "/share": self._cmd_share,
             "/unshare": self._cmd_unshare,
+            "/browser": self._cmd_browser,
             "/system": self._cmd_system,
             "/params": self._cmd_params,
             "/settings": self._cmd_settings,
@@ -702,6 +703,59 @@ class CommandsMixin:
             )
         except Exception as exc:
             self.notify(f"Failed to launch share terminal: {exc}", title="Share Error", severity="error", timeout=4.0)
+
+    def _cmd_browser(self, arg: str = "") -> None:
+        from ...browser import get_browser_engine
+        raw = (arg or "").strip()
+        parts = raw.split(None, 1)
+        sub = parts[0].lower() if parts else "status"
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        b_cfg = self.settings.config.setdefault("browser", {})
+
+        if sub in ("on", "enable"):
+            b_cfg["enabled"] = True
+            self.settings.save_config()
+            self.notify("Browser Control (Headless CDP) enabled. Agent can now use <tool:browser>.", title="Browser Control", timeout=4.0)
+            return
+        if sub in ("off", "disable"):
+            b_cfg["enabled"] = False
+            self.settings.save_config()
+            get_browser_engine().close()
+            self.notify("Browser Control disabled and headless browser closed.", title="Browser Control", timeout=4.0)
+            return
+        if sub in ("view", "show"):
+            from ...browser import open_live_browser_viewer
+            url = open_live_browser_viewer()
+            self.notify(f"Opened Live Browser Viewer: {url}", title="Browser Control", timeout=3.5)
+            return
+        if sub == "close":
+            get_browser_engine().close()
+            self.notify("Headless browser closed.", title="Browser Control", timeout=3.0)
+            return
+        if sub == "open" and rest:
+            b_cfg["enabled"] = True
+            self.settings.save_config()
+            res = get_browser_engine().open_url(rest)
+            if res.get("success"):
+                errs = len(res.get("console_errors") or [])
+                self.notify(
+                    f"Opened: {res.get('url')} ({res.get('elements_count', 0)} elements, {errs} console errors)",
+                    title="Browser Control",
+                    timeout=5.0,
+                )
+            else:
+                self.notify(f"Failed: {res.get('error')}", title="Browser Error", severity="error", timeout=4.0)
+            return
+
+        st = get_browser_engine().get_state()
+        enabled_lbl = "ON" if b_cfg.get("enabled", False) else "OFF"
+        run_lbl = f"Running ({st.get('url')})" if st.get("running") else "Idle"
+        self.notify(
+            f"Browser Control: {enabled_lbl} · {run_lbl} · {st.get('console_errors', 0)} errors\n"
+            f"Usage: /browser on | off | open <url> | close",
+            title="Browser Control",
+            timeout=5.0,
+        )
 
     def _cmd_unshare(self, arg: str = "") -> None:
         procs = list(getattr(self, "_share_procs", []) or [])

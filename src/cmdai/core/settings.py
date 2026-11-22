@@ -36,6 +36,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "max_iterations": 25,
         "auto_approve_readonly": True,
     },
+    "browser": {
+        "enabled": False,
+    },
     "permissions": {
         "read": "allow",
         "ls": "allow",

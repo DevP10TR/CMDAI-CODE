@@ -64,6 +64,8 @@ class SettingsModal(ModalScreen[bool]):
         ol.add_option(Option(f"  Active GGUF Loader:      {on}{active_loader}"))
         ol.add_option(Option(f"  Flash Attention (GGUF):  {on if flash_attn else off}"))
         ol.add_option(Option(f"  KV Cache Type (GGUF):    [b #3fb950]{kv_cache}[/]"))
+        browser_on = bool((self.settings.config.get("browser") or {}).get("enabled", False))
+        ol.add_option(Option(f"  Browser Control (CDP):   {on if browser_on else off}"))
         ol.add_option(Option("  Install Global Launcher: [b #58a6ff]Run[/] [dim]cmdai code installer[/dim]"))
         # OptionList ignores `enter` while `highlighted` is None, so no
         # OptionSelected is ever posted and the row cannot be changed. Default
@@ -123,6 +125,16 @@ class SettingsModal(ModalScreen[bool]):
             self.settings.config["kv_cache_type"] = next_kv
             self.settings.save_config()
         elif idx == 7:
+            b_cfg = self.settings.config.setdefault("browser", {})
+            b_cfg["enabled"] = not bool(b_cfg.get("enabled", False))
+            self.settings.save_config()
+            if not b_cfg["enabled"]:
+                try:
+                    from ...browser import get_browser_engine
+                    get_browser_engine().close()
+                except Exception:
+                    pass
+        elif idx == 8:
             install_global_launcher(silent=False)
 
         self.rebuild_options()

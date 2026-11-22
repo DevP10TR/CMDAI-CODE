@@ -1,8 +1,10 @@
+import atexit
 import glob as py_glob
 import os
 import re
 import subprocess
 import tempfile
+import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -681,6 +683,246 @@ def tool_command(
         "stdout": out,
         "stderr": "",
     }
+
+
+_STATIC_PREVIEW_SERVERS: Dict[str, Tuple[Any, int]] = {}
+_STATIC_PREVIEW_LOCK = threading.Lock()
+
+
+def _shutdown_static_preview_servers() -> None:
+    with _STATIC_PREVIEW_LOCK:
+        for _, (srv, _p) in list(_STATIC_PREVIEW_SERVERS.items()):
+            try:
+                srv.shutdown()
+                srv.server_close()
+            except Exception:
+                pass
+        _STATIC_PREVIEW_SERVERS.clear()
+
+
+atexit.register(_shutdown_static_preview_servers)
+
+
+def _is_local_port_open(port: int) -> bool:
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
+def _start_static_preview_server(serve_dir: str, preferred_port: Optional[int] = None) -> int:
+    """Start a quiet threaded static HTTP server on a free local port (random by default)."""
+    import functools
+    import http.server
+    import socketserver
+
+    norm_dir = os.path.abspath(serve_dir)
+    with _STATIC_PREVIEW_LOCK:
+        existing = _STATIC_PREVIEW_SERVERS.get(norm_dir)
+        if existing is not None:
+            srv_obj, ex_port = existing
+            if (preferred_port is None or ex_port == preferred_port) and _is_local_port_open(ex_port):
+                return ex_port
+            # Port changed or server died: stop old one cleanly
+            try:
+                srv_obj.shutdown()
+                srv_obj.server_close()
+            except Exception:
+                pass
+            _STATIC_PREVIEW_SERVERS.pop(norm_dir, None)
+
+        class _QuietStaticHandler(http.server.SimpleHTTPRequestHandler):
+            def log_message(self, format: str, *args: Any) -> None:
+                pass
+
+        class _ReusableThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+            daemon_threads = True
+            allow_reuse_address = True
+
+        handler_cls = functools.partial(_QuietStaticHandler, directory=norm_dir)
+        bind_port = int(preferred_port) if (preferred_port and 1 <= int(preferred_port) <= 65535) else 0
+        try:
+            httpd = _ReusableThreadingHTTPServer(("127.0.0.1", bind_port), handler_cls)
+        except OSError:
+            # Preferred port busy or restricted -> automatically pick a random unused local port
+            httpd = _ReusableThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
+
+        actual_port = int(httpd.server_address[1])
+        t = threading.Thread(target=httpd.serve_forever, daemon=True, name=f"cmdai-static-{actual_port}")
+        t.start()
+        _STATIC_PREVIEW_SERVERS[norm_dir] = (httpd, actual_port)
+        return actual_port
+
+
+def _find_static_root(workdir: str) -> str:
+    """Find the best directory containing index.html inside workdir."""
+    base = os.path.abspath(workdir or os.getcwd())
+    for rel in ("", "src", "public", "dist", "build"):
+        cand = os.path.join(base, rel) if rel else base
+        if os.path.isfile(os.path.join(cand, "index.html")):
+            return cand
+    return base
+
+
+def _resolve_browser_url(raw_url: str, workdir: str, port: Optional[int] = None) -> str:
+    """Resolve local file paths (e.g. 'src/index.html') or dead localhost ports via Auto-Static-Server."""
+    import urllib.parse
+
+    u = (raw_url or "").strip()
+    if not u:
+        return u
+
+    # Convert file:///... to local path
+    if u.lower().startswith("file://"):
+        parsed_f = urllib.parse.urlparse(u)
+        fpath = urllib.parse.unquote(parsed_f.path or "")
+        if os.name == "nt" and fpath.startswith("/") and len(fpath) > 2 and fpath[2] == ":":
+            fpath = fpath[1:]
+        u = fpath
+
+    # Case 1: Explicit HTTP/HTTPS URL
+    if u.lower().startswith(("http://", "https://")):
+        parsed = urllib.parse.urlparse(u)
+        host = (parsed.hostname or "").lower()
+        if host in ("127.0.0.1", "localhost", "::1"):
+            req_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            if not _is_local_port_open(req_port):
+                # Check if URL path points to a file inside workdir (e.g. /src/index.html)
+                rel_p = (parsed.path or "").lstrip("/")
+                abs_work = os.path.abspath(workdir or os.getcwd())
+                if rel_p and os.path.isfile(os.path.join(abs_work, rel_p)):
+                    serve_dir = abs_work
+                    actual_port = _start_static_preview_server(serve_dir, preferred_port=req_port)
+                    return f"http://127.0.0.1:{actual_port}/{rel_p}"
+                serve_dir = _find_static_root(abs_work)
+                actual_port = _start_static_preview_server(serve_dir, preferred_port=req_port)
+                path_part = parsed.path or "/"
+                q_part = f"?{parsed.query}" if parsed.query else ""
+                f_part = f"#{parsed.fragment}" if parsed.fragment else ""
+                return f"http://127.0.0.1:{actual_port}{path_part}{q_part}{f_part}"
+        return u
+
+    # Case 2: Local file or directory path inside workspace (e.g. 'src/index.html', 'index.html', '.')
+    abs_work = os.path.abspath(workdir or os.getcwd())
+    cand = os.path.abspath(u) if os.path.isabs(u) else os.path.abspath(os.path.join(abs_work, u))
+    if os.path.isfile(cand):
+        serve_dir = os.path.dirname(cand)
+        fname = urllib.parse.quote(os.path.basename(cand))
+        actual_port = _start_static_preview_server(serve_dir, preferred_port=port)
+        return f"http://127.0.0.1:{actual_port}/{fname}"
+    if os.path.isdir(cand):
+        serve_dir = _find_static_root(cand)
+        actual_port = _start_static_preview_server(serve_dir, preferred_port=port)
+        return f"http://127.0.0.1:{actual_port}/"
+
+    # Fallback: if it looks like a bare domain (e.g. example.com), prepend https://
+    if "." in u and not u.lower().endswith((".html", ".htm")):
+        return f"https://{u}"
+    return u
+
+
+def tool_browser(
+    ctx: AgentContext,
+    action: str = "run",
+    url: str = "",
+    task: str = "",
+    port: Optional[int] = None,
+    device: str = "desktop",
+    selector: str = "",
+    index: Optional[int] = None,
+    text: str = "",
+    direction: str = "down",
+    submit: bool = False,
+    x: Optional[int] = None,
+    y: Optional[int] = None,
+    on_step: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
+    """Control the isolated headless CDP browser without touching the user's mouse or keyboard."""
+    from ..browser import get_browser_engine
+    from ..browser.agent import run_browser_agent
+    from ..core.settings import get_settings
+
+    try:
+        cfg = get_settings().config or {}
+        if not bool((cfg.get("browser") or {}).get("enabled", False)):
+            return {
+                "success": False,
+                "error": "Browser Control is disabled. Enable 'Browser Control' in Settings first.",
+            }
+    except Exception:
+        pass
+
+    if url:
+        url = _resolve_browser_url(url, ctx.workdir, port=port)
+
+    act = str(action or ("run" if task else "snapshot")).strip().lower()
+    if act == "run" or (task and act in ("open", "run", "browse", "test")):
+        return run_browser_agent(
+            task=task or f"Open and inspect {url}",
+            url=url,
+            workdir=ctx.workdir,
+            device=device or "desktop",
+            on_step=on_step,
+        )
+
+    eng = get_browser_engine()
+    if act in ("open", "goto", "navigate"):
+        res = eng.open_url(url)
+        # Also attach a real visual screenshot right inside `open` so vision models
+        # can inspect the page in ONE single tool call without needing a separate screenshot step!
+        if res.get("success") and eng.latest_frame:
+            try:
+                cache_dir = os.path.join(ctx.workdir, ".cmdai", "browser_shots")
+                os.makedirs(cache_dir, exist_ok=True)
+                shot_path = os.path.join(cache_dir, f"browser_open_{int(time.time() * 1000)}.jpg")
+                with open(shot_path, "wb") as sf:
+                    sf.write(eng.latest_frame)
+                if not hasattr(ctx, "pending_images") or ctx.pending_images is None:
+                    ctx.pending_images = []
+                ctx.pending_images.append({"path": shot_path, "question": "Inspect this browser webpage screenshot."})
+                res["screenshot_attached"] = True
+            except Exception:
+                pass
+        return res
+    if act == "snapshot":
+        return eng.snapshot()
+    if act == "click":
+        res = eng.click(index=index, selector=selector, x=x, y=y)
+        if res.get("success") and eng.latest_frame:
+            try:
+                cache_dir = os.path.join(ctx.workdir, ".cmdai", "browser_shots")
+                os.makedirs(cache_dir, exist_ok=True)
+                shot_path = os.path.join(cache_dir, f"browser_click_{int(time.time() * 1000)}.jpg")
+                with open(shot_path, "wb") as sf:
+                    sf.write(eng.latest_frame)
+                if not hasattr(ctx, "pending_images") or ctx.pending_images is None:
+                    ctx.pending_images = []
+                ctx.pending_images.append({"path": shot_path, "question": "Inspect updated browser page after click."})
+            except Exception:
+                pass
+        return res
+    if act in ("type", "fill", "input"):
+        return eng.type_text(text=text, index=index, selector=selector, submit=submit)
+    if act == "scroll":
+        return eng.scroll(direction=direction or "down")
+    if act == "screenshot":
+        cache_dir = os.path.join(ctx.workdir, ".cmdai", "browser_shots")
+        res = eng.screenshot(save_dir=cache_dir)
+        if res.get("success") and res.get("path"):
+            try:
+                if not hasattr(ctx, "pending_images") or ctx.pending_images is None:
+                    ctx.pending_images = []
+                ctx.pending_images.append({"path": res["path"], "question": "Inspect this browser webpage screenshot."})
+            except Exception:
+                pass
+        return res
+    if act == "console":
+        return eng.get_console()
+    if act == "close":
+        return eng.close()
+    return {"success": False, "error": f"Unknown browser action: {act}"}
 
 
 def tool_web(ctx: AgentContext, url_or_query: str) -> Dict[str, Any]:

@@ -382,6 +382,13 @@ class WorkerMixin:
             except Exception:
                 pass
         finally:
+            try:
+                from ...browser import get_browser_engine
+                eng = get_browser_engine()
+                if eng.running and not eng.take_control:
+                    eng.close()
+            except Exception:
+                pass
             worker_sid = getattr(assistant_card, "session_id", None) or getattr(self, "current_session_id", "")
             active_c = assistant_card
             live_info: Dict[str, Any] = {}

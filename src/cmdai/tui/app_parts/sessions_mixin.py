@@ -816,11 +816,25 @@ class SessionsMixin:
         try:
             # 1. Truncate self.messages from this turn onwards (keep user prompt if keep_user=True)
             idx = next((i for i, m in enumerate(self.messages) if m.get("role") == "user" and int(m.get("turn_id") or -1) == int(turn_id)), None)
+            if idx is None:
+                # Fallback for reloaded sessions whose JSON messages do not store turn_id:
+                # locate the N-th real user message (1-based) so revert always clears old turns!
+                real_u_indices = [
+                    i for i, m in enumerate(self.messages)
+                    if m.get("role") == "user"
+                    and not str(m.get("content", "")).lstrip().startswith("<tool_response")
+                    and not str(m.get("content", "")).lstrip().startswith("[image question]")
+                ]
+                pos = max(0, int(turn_id) - 1)
+                if pos < len(real_u_indices):
+                    idx = real_u_indices[pos]
             if idx is not None:
                 if keep_user:
                     del self.messages[idx + 1:]
                 else:
                     del self.messages[idx:]
+            elif int(turn_id) <= 1 and not keep_user:
+                self.messages.clear()
             else:
                 if keep_user:
                     self.messages = [m for m in self.messages if int(m.get("turn_id") or 0) <= int(turn_id) and m.get("role") == "user"]

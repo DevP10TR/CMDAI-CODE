@@ -414,4 +414,12 @@ class SessionRuntime:
                     self.messages.append({"role": "user", "content": formatted_res})
                     self.transcript.append({"kind": "tool_result", "name": t_name, "result": tool_res})
 
+        try:
+            from ..browser import get_browser_engine
+            eng = get_browser_engine()
+            if eng.running and not eng.take_control:
+                eng.close()
+        except Exception:
+            pass
+
         return final_answer

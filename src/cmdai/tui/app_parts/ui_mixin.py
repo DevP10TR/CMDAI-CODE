@@ -1812,7 +1812,7 @@ class UIMixin:
             dt = min(0.5, max(0.0, now - last_tick))
             self._voice_last_tick_ts = now
 
-            if lvl >= 0.025:
+            if lvl >= 0.012:
                 self._voice_silence_elapsed = 0.0
                 self._voice_dirty_audio = True
             elif not getattr(self, "_voice_live_busy", False):
@@ -1827,17 +1827,17 @@ class UIMixin:
             is_busy = bool(getattr(self, "_voice_live_busy", False))
             if live:
                 self._set_voice_input_preview(f"{live} {spin}" if is_busy else live)
-            elif step % 3 == 0:
+            elif not getattr(self, "_voice_base_text", "") and step % 3 == 0:
                 dots = ("...", ".", "..")[int(getattr(self, "_voice_dot_step", 0)) % 3]
                 self._voice_dot_step = getattr(self, "_voice_dot_step", 0) + 1
                 self._set_voice_input_preview(f"Transcribing{dots}")
             last_done = float(getattr(self, "_voice_last_live_done_ts", 0.0))
             if (
                 rec is not None
-                and rec.elapsed_seconds >= 1.2
-                and getattr(self, "_voice_dirty_audio", False)
+                and rec.elapsed_seconds >= 0.9
+                and (getattr(self, "_voice_dirty_audio", False) or rec.elapsed_seconds >= 1.8)
                 and not getattr(self, "_voice_live_busy", False)
-                and (now - last_done) >= 1.6
+                and (now - last_done) >= 1.1
             ):
                 self._voice_dirty_audio = False
                 self._run_live_voice_snapshot()
@@ -2012,7 +2012,8 @@ class UIMixin:
             self._voice_req_id = getattr(self, "_voice_req_id", 0) + 1
             self._voice_state = "recording"
             self._set_mic_label("[b #f85149]■[/] [#8b949e]▂▂▂▂[/]")
-            self._set_voice_input_preview("Transcribing...")
+            if not self._voice_base_text:
+                self._set_voice_input_preview("Transcribing...")
             self._stop_voice_timer()
             self._voice_timer = self.set_interval(0.12, self._tick_voice_ui)
             return

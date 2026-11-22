@@ -21,6 +21,7 @@ COMMANDS_DOC: Dict[str, str] = {
     "/tunnel": "Open Rust Web UI & Cloudflare Quick Tunnel with QR code for phone ↔ PC remote control (/tunel)",
     "/share": "Pick & share a session (read-only HTML) in a separate terminal with QR code (remembers last selection)",
     "/unshare": "Stop active session sharing terminal(s)",
+    "/browser": "Headless CDP Browser Control (on | off | open <url> | status | close)",
     "/bg": "Background tasks & running subagents manager (Ctrl+B)",
     "/todo": "Project tasks & TODO checklist manager",
     "/diff": "Review working changes in a modal (read-only, opens commit)",

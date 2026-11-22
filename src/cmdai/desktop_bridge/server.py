@@ -15,6 +15,7 @@ import difflib
 import json
 import os
 import platform
+import queue as std_queue
 import shutil
 import subprocess
 import sys
@@ -48,6 +49,7 @@ from cmdai.core.capabilities import (
 from cmdai.core.checkpoints import CheckpointManager
 from cmdai.core.model_paths import list_gguf_files
 from cmdai.core.providers import PROVIDERS_CATALOG, load_custom_providers
+from cmdai.core.pty_terminal import get_pty_terminal
 from cmdai.core.sessions import SessionManager, clean_title_from_prompt, format_relative_time
 from cmdai.core.settings import SettingsManager
 from cmdai.indexer.ast_indexer import extract_symbols_from_code
@@ -736,6 +738,7 @@ class GeneralSettingsReq(BaseModel):
     subagent_model: Optional[str] = None
     auto_repo_map: Optional[bool] = None
     auto_approve_readonly: Optional[bool] = None
+    browser_enabled: Optional[bool] = None
     perm_read: Optional[str] = None
     perm_write: Optional[str] = None
     perm_edit: Optional[str] = None
@@ -793,6 +796,7 @@ def _extract_general_settings(settings_mgr: SettingsManager, resolved_root: Path
         "subagent_model": str(cfg.get("subagent_model") or ""),
         "auto_repo_map": bool(agent_cfg.get("auto_repo_map", True)),
         "auto_approve_readonly": bool(agent_cfg.get("auto_approve_readonly", True)),
+        "browser_enabled": bool((cfg.get("browser") or {}).get("enabled", False)),
         "perm_read": str(perm_cfg.get("read") or "allow"),
         "perm_write": str(perm_cfg.get("write") or "ask"),
         "perm_edit": str(perm_cfg.get("edit") or "ask"),
@@ -1455,6 +1459,8 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
             mgr.config.setdefault("agent", {})["auto_repo_map"] = bool(req.auto_repo_map)
         if req.auto_approve_readonly is not None:
             mgr.config.setdefault("agent", {})["auto_approve_readonly"] = bool(req.auto_approve_readonly)
+        if req.browser_enabled is not None:
+            mgr.config.setdefault("browser", {})["enabled"] = bool(req.browser_enabled)
         if req.reasoning_level is not None:
             mgr.config.setdefault("generation", {})["reasoning_level"] = req.reasoning_level
         if req.temperature is not None:
@@ -1787,6 +1793,99 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
                 "returncode": -1,
                 "duration_ms": 30000,
             }
+
+    def _preferred_shell() -> str:
+        try:
+            sm_set = SettingsManager(state["workdir"])
+            return str((sm_set.get("shell") or "")).strip()
+        except Exception:
+            return ""
+
+    @app.get("/api/terminal/state")
+    def terminal_pty_state() -> Dict[str, Any]:
+        pty_sess = get_pty_terminal()
+        return {"ok": True, **pty_sess.get_state()}
+
+    @app.post("/api/terminal/input")
+    def terminal_pty_input(payload: Dict[str, Any]) -> Dict[str, Any]:
+        pty_sess = get_pty_terminal()
+        data = str(payload.get("data", ""))
+        if not pty_sess.get_state().get("running"):
+            pty_sess.ensure_started(
+                workdir=str(state["workdir"]),
+                shell=_preferred_shell(),
+                cols=int(payload.get("cols") or 100),
+                rows=int(payload.get("rows") or 28),
+            )
+        ok = pty_sess.write(data)
+        return {"ok": ok, **pty_sess.get_state()}
+
+    @app.post("/api/terminal/resize")
+    def terminal_pty_resize(payload: Dict[str, Any]) -> Dict[str, Any]:
+        pty_sess = get_pty_terminal()
+        cols = int(payload.get("cols") or 100)
+        rows = int(payload.get("rows") or 28)
+        ok = pty_sess.resize(cols, rows)
+        return {"ok": ok, **pty_sess.get_state()}
+
+    @app.post("/api/terminal/restart")
+    def terminal_pty_restart(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        body = payload or {}
+        pty_sess = get_pty_terminal()
+        st = pty_sess.restart(
+            workdir=str(state["workdir"]),
+            shell=str(body.get("shell") or _preferred_shell()),
+            cols=int(body.get("cols") or 100),
+            rows=int(body.get("rows") or 28),
+        )
+        return {"ok": True, **st}
+
+    @app.get("/api/terminal/stream")
+    async def terminal_pty_stream(
+        request: Request,
+        cols: int = 100,
+        rows: int = 28,
+    ) -> StreamingResponse:
+        pty_sess = get_pty_terminal()
+        pty_sess.ensure_started(
+            workdir=str(state["workdir"]),
+            shell=_preferred_shell(),
+            cols=cols,
+            rows=rows,
+        )
+        sub_q, init_buf, init_state = pty_sess.subscribe()
+
+        async def _gen():
+            try:
+                init_payload = json.dumps({"state": init_state, "buffer": init_buf})
+                yield f"event: init\ndata: {init_payload}\n\n"
+                last_ping = time.monotonic()
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        ev, pl = await asyncio.to_thread(sub_q.get, True, 0.4)
+                        if ev == "data":
+                            yield f"event: data\ndata: {json.dumps({'chunk': pl})}\n\n"
+                        elif ev == "state":
+                            yield f"event: state\ndata: {json.dumps(pl)}\n\n"
+                        last_ping = time.monotonic()
+                    except std_queue.Empty:
+                        if time.monotonic() - last_ping >= 15.0:
+                            yield ": keepalive\n\n"
+                            last_ping = time.monotonic()
+            finally:
+                pty_sess.unsubscribe(sub_q)
+
+        return StreamingResponse(
+            _gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.get("/api/map/graph")
     def map_graph(max_files: int = 65) -> Dict[str, Any]:
@@ -2339,17 +2438,27 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
                                 ("subagent_event", {**entry, "phase": str(ev.get("phase") or "progress")}),
                             )
 
-                        max_steps_cfg = int((cfg.get("agent") or {}).get("max_iterations") or 50)
-                        final = runtime.run_turn(
-                            ctx_prefix + req.prompt,
-                            on_token=lambda tok: loop.call_soon_threadsafe(q.put_nowait, ("token", {"text": tok})),
-                            on_thinking=_on_thinking,
-                            on_tool_start=_on_tool_start,
-                            on_tool_finish=_on_tool_finish,
-                            on_tool_stream=_on_tool_stream,
-                            on_subagent_event=_on_subagent_event,
-                            max_steps=max(15, max_steps_cfg),
-                        )
+                        from cmdai.browser import get_browser_engine as _get_b_eng
+                        _b_eng = _get_b_eng()
+
+                        def _on_browser_ev(bev: Dict[str, Any]):
+                            loop.call_soon_threadsafe(q.put_nowait, ("browser_event", bev))
+
+                        _b_eng.add_listener(_on_browser_ev)
+                        try:
+                            max_steps_cfg = int((cfg.get("agent") or {}).get("max_iterations") or 50)
+                            final = runtime.run_turn(
+                                ctx_prefix + req.prompt,
+                                on_token=lambda tok: loop.call_soon_threadsafe(q.put_nowait, ("token", {"text": tok})),
+                                on_thinking=_on_thinking,
+                                on_tool_start=_on_tool_start,
+                                on_tool_finish=_on_tool_finish,
+                                on_tool_stream=_on_tool_stream,
+                                on_subagent_event=_on_subagent_event,
+                                max_steps=max(15, max_steps_cfg),
+                            )
+                        finally:
+                            _b_eng.remove_listener(_on_browser_ev)
                         if req.prompt.strip() != "Inspect repomap.py":
                             try:
                                 sm = SessionManager(project_dir=str(wd))
@@ -2588,6 +2697,73 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
                 item["summary"] = "Cancelled by user"
                 break
         return {"ok": True, "subagents": list(state["subagents"])}
+
+    @app.get("/api/browser/state")
+    def browser_state_api() -> Dict[str, Any]:
+        from cmdai.browser import get_browser_engine
+        return {"ok": True, **get_browser_engine().get_state()}
+
+    @app.get("/api/browser/frame")
+    def browser_frame_api():
+        from fastapi.responses import Response
+        from cmdai.browser import get_browser_engine
+        eng = get_browser_engine()
+        if not eng.latest_frame:
+            return Response(status_code=204)
+        return Response(
+            content=eng.latest_frame,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post("/api/browser/open")
+    async def browser_open_api(payload: Dict[str, Any]) -> Dict[str, Any]:
+        from cmdai.browser import get_browser_engine
+        url = str(payload.get("url") or "").strip()
+        if not url:
+            return {"ok": False, "error": "URL is required"}
+        res = await asyncio.to_thread(get_browser_engine().open_url, url)
+        return {"ok": bool(res.get("success")), **res, "state": get_browser_engine().get_state()}
+
+    @app.post("/api/browser/interact")
+    async def browser_interact_api(payload: Dict[str, Any]) -> Dict[str, Any]:
+        from cmdai.browser import get_browser_engine
+        eng = get_browser_engine()
+        act = str(payload.get("action") or "click").lower()
+        if act == "click":
+            res = await asyncio.to_thread(
+                eng.click,
+                x=int(payload.get("x", 0)),
+                y=int(payload.get("y", 0)),
+                from_user=True,
+            )
+        elif act == "type":
+            res = await asyncio.to_thread(
+                eng.type_text,
+                text=str(payload.get("text") or ""),
+                submit=bool(payload.get("submit", False)),
+                from_user=True,
+            )
+        elif act == "scroll":
+            res = await asyncio.to_thread(
+                eng.scroll,
+                direction=str(payload.get("direction") or "down"),
+                amount=int(payload.get("amount") or 420),
+            )
+        else:
+            res = {"success": False, "error": f"Unknown action: {act}"}
+        return {"ok": bool(res.get("success")), **res, "state": eng.get_state()}
+
+    @app.post("/api/browser/take-control")
+    def browser_take_control_api(payload: Dict[str, Any]) -> Dict[str, Any]:
+        from cmdai.browser import get_browser_engine
+        st = get_browser_engine().set_take_control(bool(payload.get("enabled", False)))
+        return {"ok": True, **st}
+
+    @app.post("/api/browser/close")
+    def browser_close_api() -> Dict[str, Any]:
+        from cmdai.browser import get_browser_engine
+        return {"ok": True, **get_browser_engine().close()}
 
     ui_dir = resolved_root / "web" / "ui"
     if not ui_dir.is_dir():

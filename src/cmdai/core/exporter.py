@@ -794,7 +794,12 @@ _INTERNAL_NOTICE_RE = re.compile(
     r"(?:^\s*\[Active Mode:[^\]]*\]\s*|"
     r"^\s*Pinned context files:[^\n]*\s*|"
     r"\[Proceed with the next step[^\]]*\]\s*|"
-    r"\[System:[^\]]*\]\s*)",
+    r"\[System:[^\]]*\]\s*|"
+    r"\[image question\][^\n]*\s*|"
+    r"\[vision:[^\]]*\]\s*|"
+    r"Poprzednie wywołanie narzędzia zakończyło się błędem[^\n]*\s*|"
+    r"Narzędzia zostały już wykonane\.[^\n]*\s*|"
+    r"Zakończyłeś fazę myślenia \(thinking\)[^\n]*\s*)",
     re.IGNORECASE | re.MULTILINE,
 )
 

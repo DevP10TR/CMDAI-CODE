@@ -9,6 +9,7 @@ Runs inside a dedicated Windows console window (`CREATE_NEW_CONSOLE`) so:
 import argparse
 import http.server
 import importlib.util
+import json
 import os
 import re
 import secrets
@@ -20,6 +21,7 @@ import sys
 import threading
 import time
 import traceback
+import urllib.parse
 import urllib.request
 from typing import Optional
 
@@ -136,9 +138,45 @@ def _start_share_http_server(html_path: str, token: str) -> tuple[socketserver.T
     return srv, port
 
 
-def _start_cloudflared(cf_bin: str, local_url: str, timeout: float = 25.0) -> tuple[subprocess.Popen, Optional[str]]:
+def _doh_has_record(host: str) -> bool:
+    """Check Cloudflare 1.1.1.1 DoH first so we NEVER poison the local OS DNS cache with NXDOMAIN."""
+    try:
+        url = f"https://1.1.1.1/dns-query?name={urllib.parse.quote(host)}&type=A"
+        req = urllib.request.Request(url, headers={"Accept": "application/dns-json"})
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            answers = data.get("Answer") or []
+            return bool(answers)
+    except Exception:
+        return False
+
+
+def _wait_for_tunnel_ready(base_url: str, timeout: float = 18.0) -> bool:
+    """Wait for Cloudflare DNS propagation before revealing/copying the URL."""
+    host = urllib.parse.urlparse(base_url).hostname or ""
+    if not host:
+        return False
+    deadline = time.time() + timeout
+    doh_ok = False
+    while time.time() < deadline:
+        if not doh_ok:
+            if _doh_has_record(host):
+                doh_ok = True
+            else:
+                time.sleep(0.6)
+                continue
+        # Once 1.1.1.1 has the record, verify the local OS resolver sees it too
+        try:
+            socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+            return True
+        except OSError:
+            time.sleep(0.8)
+    return doh_ok
+
+
+def _start_cloudflared(cf_bin: str, local_url: str, timeout: float = 28.0) -> tuple[subprocess.Popen, Optional[str]]:
     proc = subprocess.Popen(
-        [cf_bin, "tunnel", "--url", local_url, "--no-autoupdate"],
+        [cf_bin, "tunnel", "--url", local_url, "--protocol", "http2", "--no-autoupdate"],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -147,7 +185,8 @@ def _start_cloudflared(cf_bin: str, local_url: str, timeout: float = 25.0) -> tu
         bufsize=1,
     )
     found_url: list[Optional[str]] = [None]
-    done = threading.Event()
+    url_done = threading.Event()
+    conn_done = threading.Event()
 
     def _reader() -> None:
         assert proc.stdout is not None
@@ -155,10 +194,17 @@ def _start_cloudflared(cf_bin: str, local_url: str, timeout: float = 25.0) -> tu
             m = TRYCLOUDFLARE_RE.search(line)
             if m and not found_url[0]:
                 found_url[0] = m.group(0)
-                done.set()
+                url_done.set()
+            if "Registered tunnel connection" in line:
+                conn_done.set()
 
     threading.Thread(target=_reader, daemon=True).start()
-    done.wait(timeout=timeout)
+    url_done.wait(timeout=timeout)
+    if found_url[0]:
+        # Wait up to 8s for edge connection registration, then verify DNS propagation
+        conn_done.wait(timeout=8.0)
+        print("  ⏳ Waiting for Cloudflare DNS propagation (prevents NXDOMAIN)...")
+        _wait_for_tunnel_ready(found_url[0], timeout=18.0)
     return proc, found_url[0]
 
 
@@ -199,7 +245,7 @@ def _render_dashboard(
         print(f"  {green}● ONLINE{reset}  {dim}Close this window or press [Q] to disconnect remote access.{reset}")
     else:
         print(f"  {green}● SHARED{reset}  {dim}Close this window or press [Q] to stop sharing immediately.{reset}")
-    print(f"  {dim}[C] Copy URL   [Q] Stop & Close{reset}\n")
+    print(f"  {dim}[C] Copy URL   [R] New Tunnel URL   [Q] Stop & Close{reset}\n")
 
 
 def main() -> int:
@@ -228,6 +274,10 @@ def main() -> int:
             pass
 
     token = args.token or secrets.token_urlsafe(18)
+    pin = (args.pin or "").strip()
+    if args.mode == "tunnel" and not pin:
+        pin = f"{secrets.randbelow(1_000_000):06d}"
+    args.pin = pin
     bridge_proc: Optional[subprocess.Popen] = None
     web_proc: Optional[subprocess.Popen] = None
     share_srv: Optional[socketserver.ThreadingTCPServer] = None
@@ -369,6 +419,29 @@ def main() -> int:
                             title=args.title,
                             copied=ok,
                         )
+                    elif ch == "r":
+                        print("\n  ↻ Restarting Cloudflare Quick Tunnel for a fresh URL...")
+                        if cf_proc and cf_proc.poll() is None:
+                            try:
+                                cf_proc.terminate()
+                                cf_proc.wait(timeout=2)
+                            except Exception:
+                                try:
+                                    cf_proc.kill()
+                                except Exception:
+                                    pass
+                        cf_proc, new_base = _start_cloudflared(cf_bin, local_url, timeout=28.0)
+                        if new_base:
+                            public_url = f"{new_base}{route_suffix}"
+                            ok = _copy_clipboard(public_url)
+                            _render_dashboard(
+                                mode=args.mode,
+                                public_url=public_url,
+                                local_url=local_url,
+                                pin=args.pin,
+                                title=args.title,
+                                copied=ok,
+                            )
                 time.sleep(0.1)
         else:
             while cf_proc.poll() is None:

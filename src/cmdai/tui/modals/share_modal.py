@@ -189,7 +189,8 @@ class ShareSessionModal(ModalScreen[Optional[Dict[str, Any]]]):
 
         for idx, sess in enumerate(self.sessions):
             sid = str(sess.get("id") or "")
-            title = str(sess.get("title") or sid or "Session")
+            raw_title = str(sess.get("title") or sid or "Session").strip()
+            title = (raw_title[:27] + "…") if len(raw_title) > 28 else raw_title
             is_cur = bool(sess.get("is_current"))
             is_last = bool(self.last_shared_id and sid == self.last_shared_id)
             if is_last:
@@ -201,7 +202,8 @@ class ShareSessionModal(ModalScreen[Optional[Dict[str, Any]]]):
             msgs = int(sess.get("msg_count") or 0)
             if turn_count is not None:
                 t_lbl = "1 msg" if turn_count == 1 else f"{turn_count} msgs"
-                count_str = f"{t_lbl} · {tool_count} tools" if tool_count else t_lbl
+                tl_lbl = "1 tool" if tool_count == 1 else f"{tool_count} tools"
+                count_str = f"{t_lbl} · {tl_lbl}" if tool_count else t_lbl
             else:
                 count_str = f"{msgs} msgs"
             label = Text(no_wrap=True, overflow="ellipsis")
@@ -211,13 +213,14 @@ class ShareSessionModal(ModalScreen[Optional[Dict[str, Any]]]):
                 label.append("[Current]", style="#58a6ff")
             else:
                 label.append("○ ", style="#8b949e")
-                label.append(f"{title} ", style="#c9d1d9")
+                label.append(f"{title}", style="#c9d1d9")
             if is_last:
-                label.append("  ★ Last", style="#e3b341")
+                label.append(" ★", style="#e3b341")
             dir_name = str(sess.get("dir_name") or "").strip()
             if dir_name and not sess.get("is_current_dir", True):
-                label.append(f"  [{dir_name}]", style="#58a6ff")
-            meta = f"  · {count_str}" + (f" · {rel}" if rel else "")
+                short_dir = (dir_name[:13] + "…") if len(dir_name) > 14 else dir_name
+                label.append(f" [{short_dir}]", style="#58a6ff")
+            meta = f" · {count_str}" + (f" · {rel}" if rel else "")
             label.append(meta, style="#6e7681")
             ol.add_option(Option(label, id=sid))
 
