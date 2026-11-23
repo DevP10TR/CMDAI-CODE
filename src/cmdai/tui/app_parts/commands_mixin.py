@@ -134,7 +134,7 @@ class CommandsMixin:
                 "/ctx", "/add", "/mode", "/thinking",
                 "/cd", "/changelog", "/update", "/updatesettings", "/mcp",
                 "/custom", "/plugins", "/memory", "/rules", "/agents", "/map",
-                "/tunnel", "/tunel", "/share", "/unshare", "/browser"
+                "/tunnel", "/tunel", "/share", "/unshare", "/live", "/spectate", "/browser"
             )
             if cmd in modal_cmds:
                 pass
@@ -234,6 +234,8 @@ class CommandsMixin:
             "/tunel": self._cmd_tunnel,
             "/share": self._cmd_share,
             "/unshare": self._cmd_unshare,
+            "/live": self._cmd_live,
+            "/spectate": self._cmd_live,
             "/browser": self._cmd_browser,
             "/system": self._cmd_system,
             "/params": self._cmd_params,
@@ -372,7 +374,7 @@ class CommandsMixin:
                       "/new", "/params", "/help", "/loader", "/settings",
                       "/tools", "/status", "/diff", "/commit",
                       "/todo", "/bg", "/ctx", "/add", "/mode", "/thinking",
-                      "/changelog", "/update", "/updatesettings", "/mcp", "/custom", "/plugins", "/memory", "/rules", "/agents", "/tunnel", "/tunel", "/share", "/unshare", "/exit")
+                      "/changelog", "/update", "/updatesettings", "/mcp", "/custom", "/plugins", "/memory", "/rules", "/agents", "/tunnel", "/tunel", "/share", "/unshare", "/live", "/spectate", "/exit")
         if not self.in_chat_mode and cmd not in modal_cmds:
             self._switch_to_chat()
         self._dispatch_command(cmd)
@@ -559,6 +561,67 @@ class CommandsMixin:
             )
         except Exception as exc:
             self.notify(f"Failed to launch tunnel terminal: {exc}", title="Tunnel Error", severity="error", timeout=4.0)
+
+    def _cmd_live(self, arg: str = "") -> None:
+        from ...core.tunnel import find_cloudflared
+        from ..modals.share_modal import CloudflaredInstallModal
+
+        sub = (arg or "").strip().lower()
+        if sub in ("stop", "off", "close"):
+            proc = getattr(self, "_live_proc", None)
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            self._live_proc = None
+            if self.http_server is not None:
+                self.http_server.revoke_spectate()
+            self.notify("Live spectate stream stopped and token revoked.", title="Live Spectate", timeout=3.0)
+            return
+
+        if not find_cloudflared():
+            def _after_install(installed: bool) -> None:
+                if installed:
+                    self._launch_live_now()
+
+            self.push_screen(CloudflaredInstallModal(feature_name="/live"), _after_install)
+            return
+
+        self._launch_live_now()
+
+    def _launch_live_now(self) -> None:
+        from ...core.tunnel import launch_tunnel_terminal
+
+        if self.http_server is None:
+            port = self.settings.config.get("server", {}).get("port", 8080)
+            self.http_server = BackgroundHTTPServer(port=port, app_ref=self)
+        if not self.http_server.is_running:
+            self.http_server.start()
+
+        old = getattr(self, "_live_proc", None)
+        if old is not None and old.poll() is None:
+            try:
+                old.terminate()
+            except Exception:
+                pass
+
+        token = self.http_server.enable_spectate()
+        try:
+            self._live_proc = launch_tunnel_terminal(
+                mode="live",
+                backend_port=self.http_server.port,
+                token=token,
+                title=getattr(self, "session_title", "") or self.current_session_id,
+                session_id=self.current_session_id,
+            )
+            self.notify(
+                "Live Read-Only Spectate tunnel opened in a new terminal (auto-copied URL + QR). Close that window or run /live stop to disconnect.",
+                title="Live Spectate",
+                timeout=6.0,
+            )
+        except Exception as exc:
+            self.notify(f"Failed to launch live spectate terminal: {exc}", title="Live Spectate Error", severity="error", timeout=4.0)
 
     def _cmd_share(self, arg: str = "") -> None:
         from ...core.exporter import summarize_session_counts

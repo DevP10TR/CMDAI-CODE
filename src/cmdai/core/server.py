@@ -2,8 +2,10 @@ import http.server
 import json
 import os
 import secrets
+import socket
 import socketserver
 import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
@@ -45,6 +47,8 @@ class BackgroundHTTPServer:
         self._remote_pin: str = ""
         self._remote_enabled: bool = False
         self._allow_local_web: bool = False
+        self._spectate_token: str = ""
+        self._spectate_enabled: bool = False
 
     def start(self) -> bool:
         if self.is_running:
@@ -101,6 +105,161 @@ class BackgroundHTTPServer:
             if self._remote_enabled and self._remote_token and token_header == self._remote_token:
                 return True
             return self._allow_local_web
+
+    def enable_spectate(self) -> str:
+        with self._lock:
+            token = secrets.token_urlsafe(18)
+            self._spectate_token = token
+            self._spectate_enabled = True
+            return token
+
+    def revoke_spectate(self) -> None:
+        with self._lock:
+            self._spectate_token = ""
+            self._spectate_enabled = False
+
+    def is_spectate_authorized(self, token_header: str) -> bool:
+        with self._lock:
+            if self._spectate_enabled and self._spectate_token and token_header == self._spectate_token:
+                return True
+        return self.is_remote_authorized(token_header)
+
+    def _get_live_spectate_payload(self) -> Dict[str, Any]:
+        base = self._get_state_payload()
+        app = self.app_ref
+        live_transcript: List[Dict[str, Any]] = []
+        live_phase = "idle"
+        live_detail = ""
+        if app is not None:
+            try:
+                chat_scroll = app.query_one("#chat-scroll")
+                children = list(getattr(chat_scroll, "children", []) or [])
+            except Exception:
+                children = []
+            for child in children:
+                cls_name = type(child).__name__
+                if cls_name == "UserMessageCard":
+                    live_transcript.append({
+                        "kind": "user",
+                        "text": str(getattr(child, "prompt", "") or ""),
+                        "time": str(getattr(child, "time_str", "") or ""),
+                    })
+                elif cls_name == "AssistantTurnCard":
+                    card_start_idx = len(live_transcript)
+                    card_gen = bool(getattr(child, "is_generating", False))
+                    seen_tb_ids = set()
+
+                    def _emit_tb(tb_obj: Any) -> None:
+                        nonlocal live_phase
+                        if tb_obj is None or id(tb_obj) in seen_tb_ids:
+                            return
+                        seen_tb_ids.add(id(tb_obj))
+                        th_txt = str(getattr(tb_obj, "thinking_text", "") or "").strip()
+                        if th_txt:
+                            live_transcript.append({"kind": "thinking", "text": th_txt})
+                        if not getattr(tb_obj, "is_finished", True):
+                            live_phase = "thinking"
+
+                    tc = getattr(child, "thinking_container", None)
+                    if tc is not None:
+                        for tc_child in list(getattr(tc, "children", []) or []):
+                            _emit_tb(tc_child)
+                    _emit_tb(getattr(child, "thinking_block", None))
+
+                    flow = getattr(child, "flow_container", None)
+                    flow_items = list(getattr(flow, "children", []) or []) if flow is not None else []
+                    if not flow_items and getattr(child, "_pending_mounts", None):
+                        flow_items = list(getattr(child, "_pending_mounts", []) or [])
+                    for fc in flow_items:
+                        fc_cls = type(fc).__name__
+                        if fc_cls == "ThinkingBlock":
+                            _emit_tb(fc)
+                        elif fc_cls == "ToolBlock" or hasattr(fc, "tool_name"):
+                            is_run = bool(getattr(fc, "tool_running", False))
+                            t_label = str(getattr(fc, "subagent_role", "") or getattr(fc, "tool_name", "tool") or "tool")
+                            t_tgt = str(getattr(fc, "target", "") or "")
+                            if is_run:
+                                live_phase = "tool"
+                                live_detail = f"{t_label} {t_tgt}".strip()
+                            raw_res = getattr(fc, "result_data", None)
+                            if isinstance(raw_res, dict):
+                                res_d = dict(raw_res)
+                            else:
+                                res_d = {
+                                    "success": not bool(getattr(fc, "has_error", False)),
+                                    "content": str(getattr(fc, "details_text", "") or ""),
+                                }
+                            live_transcript.append({
+                                "kind": "tool",
+                                "tool": t_label,
+                                "target": t_tgt,
+                                "running": is_run,
+                                "elapsed_text": str(getattr(fc, "elapsed_text", "") or ""),
+                                "result": res_d,
+                            })
+                        else:
+                            raw_md = str(getattr(fc, "_raw_markdown", "") or "").strip()
+                            if raw_md:
+                                live_transcript.append({"kind": "assistant", "text": raw_md, "streaming": False})
+
+                    gen_tool = str(getattr(child, "generating_tool_name", "") or "").strip()
+                    if gen_tool:
+                        gen_tgt = str(getattr(child, "generating_tool_target", "") or "").strip()
+                        live_phase = "tool"
+                        live_detail = f"{gen_tool} {gen_tgt}".strip()
+                        live_transcript.append({
+                            "kind": "tool",
+                            "tool": gen_tool,
+                            "target": gen_tgt,
+                            "running": True,
+                            "elapsed_text": "",
+                            "result": {},
+                        })
+
+                    raw_text = str(getattr(child, "raw_text", "") or "").strip()
+                    if raw_text:
+                        if (
+                            live_transcript
+                            and live_transcript[-1].get("kind") == "assistant"
+                            and live_transcript[-1].get("text") == raw_text
+                        ):
+                            if card_gen:
+                                live_transcript[-1]["streaming"] = True
+                        else:
+                            live_transcript.append({
+                                "kind": "assistant",
+                                "text": raw_text,
+                                "streaming": card_gen,
+                            })
+                        if card_gen:
+                            live_phase = "writing"
+
+                    if card_gen:
+                        if live_transcript and live_transcript[-1].get("kind") == "assistant":
+                            live_transcript[-1]["streaming"] = True
+                            if live_phase == "idle":
+                                live_phase = "writing"
+                        if len(live_transcript) == card_start_idx:
+                            live_transcript.append({"kind": "loading", "text": "Thinking..."})
+                            live_phase = "loading"
+
+            if not live_transcript:
+                try:
+                    live_transcript = [dict(x) for x in list(getattr(app, "_transcript", []) or []) if isinstance(x, dict)]
+                except Exception:
+                    live_transcript = []
+
+        if bool(base.get("is_generating")) and live_phase == "idle":
+            live_phase = "writing" if str(base.get("streaming_text") or "").strip() else "loading"
+
+        return {
+            **base,
+            "ok": True,
+            "spectate": True,
+            "live_phase": live_phase,
+            "live_detail": live_detail,
+            "transcript": live_transcript,
+        }
 
     def _get_state_payload(self) -> Dict[str, Any]:
         app = self.app_ref
@@ -273,6 +432,45 @@ class BackgroundHTTPServer:
                     if not self._check_remote_auth():
                         return
                     self._send_json(get_settings_payload())
+                elif path == "/api/live/state":
+                    tok = self.headers.get("X-CMDAI-Token", "")
+                    if not server_self.is_spectate_authorized(tok):
+                        self._send_json({"error": "Unauthorized"}, status=401)
+                        return
+                    self._send_json(server_self._get_live_spectate_payload())
+                elif path == "/api/live/events":
+                    tok = self.headers.get("X-CMDAI-Token", "")
+                    if not server_self.is_spectate_authorized(tok):
+                        self._send_json({"error": "Unauthorized"}, status=401)
+                        return
+                    try:
+                        self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    except Exception:
+                        pass
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                    self.send_header("Cache-Control", "no-cache, no-transform")
+                    self.send_header("X-Accel-Buffering", "no")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    last_raw = ""
+                    last_ping = time.monotonic()
+                    try:
+                        while server_self.is_running and server_self.is_spectate_authorized(tok):
+                            payload = server_self._get_live_spectate_payload()
+                            raw_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                            if raw_json != last_raw:
+                                last_raw = raw_json
+                                self.wfile.write(f"data: {raw_json}\n\n".encode("utf-8"))
+                                self.wfile.flush()
+                                last_ping = time.monotonic()
+                            elif time.monotonic() - last_ping >= 15.0:
+                                self.wfile.write(b": ping\n\n")
+                                self.wfile.flush()
+                                last_ping = time.monotonic()
+                            time.sleep(0.06)
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        pass
                 else:
                     self._send_json({"error": "Endpoint not found"}, status=404)
 
@@ -353,6 +551,13 @@ class BackgroundHTTPServer:
                     if not self._check_remote_auth():
                         return
                     server_self.revoke_remote()
+                    self._send_json({"ok": True})
+                elif path == "/api/live/revoke":
+                    tok = self.headers.get("X-CMDAI-Token", "")
+                    if not server_self.is_spectate_authorized(tok):
+                        self._send_json({"error": "Unauthorized"}, status=401)
+                        return
+                    server_self.revoke_spectate()
                     self._send_json({"ok": True})
                 elif path == "/api/remote/settings":
                     if not self._check_remote_auth():

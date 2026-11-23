@@ -9,7 +9,7 @@
   <meta name="theme-color" id="meta-theme-color" content="#f4f5f7" />
   <title>CMDAI CODE</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2318181b'/%3E%3Cpath d='M7 9h7v3H10v8h4v3H7V9zm11 0h7v3h-4v8h4v3h-7V9z' fill='%23ffffff'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="/styles.css?v=20261123c" />
+  <link rel="stylesheet" href="/styles.css?v=20261123f" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" crossorigin="anonymous" />
   <script defer src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js" crossorigin="anonymous"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js" crossorigin="anonymous"></script>
@@ -107,6 +107,9 @@
           </div>
 
           <div class="stage-topbar-right">
+            <div id="spectate-banner" class="spectate-banner hidden">
+              <button id="btn-spectate-theme" type="button" class="ed-action-btn small">Dark Theme</button>
+            </div>
             <div id="open-subapp-tabs" class="open-subapp-tabs"></div>
 
             <div class="overview-anchor">
@@ -366,6 +369,17 @@
                         <button id="btn-send-prompt" class="send-glow-btn" title="Send (Enter)">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5l0 14"/><path d="M18 11l-6 -6"/><path d="M6 11l6 -6"/></svg>
                         </button>
+                      </div>
+                    </div>
+                    <div id="spectate-composer-bar" class="spectate-composer-bar hidden">
+                      <div class="spectate-composer-indicator">
+                        <span id="spectate-typing-dots" class="spectate-typing-dots"><i></i><i></i><i></i></span>
+                        <span id="spectate-composer-text" class="spectate-composer-text">Live Spectate · Read-Only — waiting for next prompt</span>
+                      </div>
+                      <div class="spectate-composer-right">
+                        <span id="spectate-composer-model" class="composer-pill spectate-ro-pill hidden"></span>
+                        <span id="spectate-composer-mode" class="turn-badge">auto</span>
+                        <span class="spectate-readonly-tag">READ-ONLY</span>
                       </div>
                     </div>
                   </div>
@@ -1537,6 +1551,6 @@
 
   <script type="module" src="/editor.js?v=20261122x"></script>
   <script type="module" src="/map.js?v=20261122x"></script>
-  <script type="module" src="/app.js?v=20261123c"></script>
+  <script type="module" src="/app.js?v=20261123f"></script>
 </body>
 </html>

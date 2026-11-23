@@ -556,6 +556,7 @@ struct Config {
     backend: String,
     token: String,
     pin: String,
+    spectate_token: String,
     pin_guard: Mutex<PinGuard>,
 }
 
@@ -579,6 +580,7 @@ fn parse_args() -> Config {
         backend: "127.0.0.1:7860".to_string(),
         token: String::new(),
         pin: String::new(),
+        spectate_token: String::new(),
         pin_guard: Mutex::new(PinGuard {
             failures: 0,
             locked_until: None,
@@ -593,6 +595,7 @@ fn parse_args() -> Config {
             "--backend" if i + 1 < args.len() => { cfg.backend = args[i + 1].clone(); i += 2; }
             "--token" if i + 1 < args.len() => { cfg.token = args[i + 1].clone(); i += 2; }
             "--pin" if i + 1 < args.len() => { cfg.pin = args[i + 1].clone(); i += 2; }
+            "--spectate-token" if i + 1 < args.len() => { cfg.spectate_token = args[i + 1].clone(); i += 2; }
             _ => i += 1,
         }
     }
@@ -666,6 +669,8 @@ fn proxy_to_backend_streaming(
         }
     };
     // No artificial read timeout on SSE / agent streams so long multi-step tasks never drop with network error
+    let _ = backend.set_nodelay(true);
+    let _ = client.set_nodelay(true);
     let _ = backend.set_read_timeout(None);
     let _ = backend.set_write_timeout(Some(Duration::from_secs(30)));
 
@@ -682,7 +687,9 @@ fn proxy_to_backend_streaming(
     if let Some(acc) = headers.get("accept") {
         req.push_str(&format!("Accept: {}\r\n", acc));
     }
-    if !cfg.token.is_empty() {
+    if !cfg.spectate_token.is_empty() {
+        req.push_str(&format!("X-CMDAI-Token: {}\r\n", cfg.spectate_token));
+    } else if !cfg.token.is_empty() {
         req.push_str(&format!("X-CMDAI-Token: {}\r\n", cfg.token));
     }
     req.push_str("\r\n");
@@ -759,6 +766,7 @@ fn read_chunked_body<R: BufRead>(reader: &mut R, max_bytes: usize) -> Vec<u8> {
 }
 
 fn handle_client(mut stream: TcpStream, cfg: Arc<Config>) {
+    let _ = stream.set_nodelay(true);
     let _ = stream.set_read_timeout(Some(Duration::from_secs(15)));
     let mut reader = match stream.try_clone() {
         Ok(cloned) => BufReader::new(cloned),
@@ -814,7 +822,8 @@ fn handle_client(mut stream: TcpStream, cfg: Arc<Config>) {
     let _ = stream.set_read_timeout(None);
 
     let cookies = parse_cookies(&headers);
-    let remote_mode = !cfg.token.is_empty();
+    let spectate_mode = !cfg.spectate_token.is_empty();
+    let remote_mode = !spectate_mode && !cfg.token.is_empty();
     let pin_required = remote_mode && !cfg.pin.is_empty();
 
     // PIN verification endpoint (with brute-force rate limiting)
@@ -870,6 +879,16 @@ fn handle_client(mut stream: TcpStream, cfg: Arc<Config>) {
         return;
     }
 
+    // Spectate entry route /l/<spectate_token>
+    if spectate_mode {
+        let expected_live = format!("/l/{}", cfg.spectate_token);
+        if method == "GET" && clean_path == expected_live {
+            let cookie = format!("cmdai_spectate={}; Path=/; HttpOnly; SameSite=Lax", cfg.spectate_token);
+            send_response(&mut stream, "200 OK", "text/html; charset=utf-8", &[("Set-Cookie", &cookie)], INDEX_HTML.as_bytes());
+            return;
+        }
+    }
+
     // Remote entry route /r/<token>
     if remote_mode {
         let expected_route = format!("/r/{}", cfg.token);
@@ -882,8 +901,8 @@ fn handle_client(mut stream: TcpStream, cfg: Arc<Config>) {
         }
     }
 
-    // Local preview route for PIN Gate UI (only when not in remote mode)
-    if !remote_mode && method == "GET" && full_path.contains("pin_preview=1") {
+    // Local preview route for PIN Gate UI (only when not in remote/spectate mode)
+    if !remote_mode && !spectate_mode && method == "GET" && full_path.contains("pin_preview=1") {
         send_response(&mut stream, "200 OK", "text/html; charset=utf-8", &[], PIN_GATE_HTML.as_bytes());
         return;
     }
@@ -897,6 +916,55 @@ fn handle_client(mut stream: TcpStream, cfg: Arc<Config>) {
             "/map.js" => { send_response(&mut stream, "200 OK", "application/javascript; charset=utf-8", &[], MAP_JS.as_bytes()); return; }
             _ => {}
         }
+    }
+
+    // Mode discovery endpoint for Web UI
+    if method == "GET" && clean_path == "/api/web/mode" {
+        if spectate_mode {
+            let spec_ok = cookies.get("cmdai_spectate").map(|v| constant_time_eq(v, &cfg.spectate_token)).unwrap_or(false)
+                || headers.get("x-cmdai-token").map(|v| constant_time_eq(v, &cfg.spectate_token)).unwrap_or(false);
+            if !spec_ok {
+                send_response(&mut stream, "401 Unauthorized", "application/json", &[], br#"{"error":"Unauthorized"}"#);
+                return;
+            }
+            send_response(&mut stream, "200 OK", "application/json", &[], br#"{"spectate":true,"readonly":true}"#);
+            return;
+        }
+        if remote_mode {
+            let tok_ok = cookies.get("cmdai_tok").map(|v| constant_time_eq(v, &cfg.token)).unwrap_or(false)
+                || headers.get("x-cmdai-token").map(|v| constant_time_eq(v, &cfg.token)).unwrap_or(false);
+            let pin_ok = !pin_required || cookies.get("cmdai_pin").map(|v| constant_time_eq(v, &cfg.pin)).unwrap_or(false);
+            if !tok_ok || !pin_ok {
+                send_response(&mut stream, "401 Unauthorized", "application/json", &[], br#"{"error":"Unauthorized"}"#);
+                return;
+            }
+        }
+        send_response(&mut stream, "200 OK", "application/json", &[], br#"{"spectate":false,"readonly":false}"#);
+        return;
+    }
+
+    // Strict Read-Only Spectate gate
+    if spectate_mode {
+        let spec_ok = cookies.get("cmdai_spectate").map(|v| constant_time_eq(v, &cfg.spectate_token)).unwrap_or(false)
+            || headers.get("x-cmdai-token").map(|v| constant_time_eq(v, &cfg.spectate_token)).unwrap_or(false);
+        if !spec_ok {
+            send_response(&mut stream, "401 Unauthorized", "text/plain; charset=utf-8", &[], b"Unauthorized - invalid or revoked live spectate link.");
+            return;
+        }
+        if method != "GET" {
+            send_response(&mut stream, "403 Forbidden", "application/json", &[], br#"{"error":"Spectate mode is read-only"}"#);
+            return;
+        }
+        if clean_path == "/" {
+            send_response(&mut stream, "200 OK", "text/html; charset=utf-8", &[], INDEX_HTML.as_bytes());
+            return;
+        }
+        if clean_path == "/api/live/state" || clean_path == "/api/live/events" {
+            proxy_to_backend_streaming(&mut stream, &cfg, method, full_path, &headers, &body);
+            return;
+        }
+        send_response(&mut stream, "403 Forbidden", "application/json", &[], br#"{"error":"Spectate mode is read-only"}"#);
+        return;
     }
 
     // Auth check for remote mode

@@ -94,6 +94,24 @@ def _revoke_remote_backend(backend_port: int, token: str) -> None:
         pass
 
 
+def _revoke_live_backend(backend_port: int, token: str) -> None:
+    if not backend_port or not token:
+        return
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{backend_port}/api/live/revoke",
+            data=b"{}",
+            headers={
+                "Content-Type": "application/json",
+                "X-CMDAI-Token": token,
+            },
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=2.0)
+    except Exception:
+        pass
+
+
 def _start_share_http_server(html_path: str, token: str) -> tuple[socketserver.ThreadingTCPServer, int]:
     state = {"html": b""}
 
@@ -224,7 +242,12 @@ def _render_dashboard(
     bold = "\033[1m"
     reset = "\033[0m"
 
-    heading = "REMOTE TUNNEL · PHONE ↔ PC" if mode == "tunnel" else "LIVE SESSION SHARE · READ-ONLY"
+    if mode == "tunnel":
+        heading = "REMOTE TUNNEL · PHONE ↔ PC"
+    elif mode == "live":
+        heading = "LIVE SESSION SPECTATE · READ-ONLY"
+    else:
+        heading = "LIVE SESSION SHARE · READ-ONLY"
     print(f"\n  {accent}{bold}⌬  CMDAI CODE{reset}  {dim}·  {heading}{reset}")
     print(f"  {dim}{'━' * 62}{reset}\n")
 
@@ -243,6 +266,8 @@ def _render_dashboard(
     print(f"\n  {dim}{'─' * 62}{reset}")
     if mode == "tunnel":
         print(f"  {green}● ONLINE{reset}  {dim}Close this window or press [Q] to disconnect remote access.{reset}")
+    elif mode == "live":
+        print(f"  {green}● LIVE SPECTATE{reset}  {dim}Close this window or press [Q] to stop live stream immediately.{reset}")
     else:
         print(f"  {green}● SHARED{reset}  {dim}Close this window or press [Q] to stop sharing immediately.{reset}")
     print(f"  {dim}[C] Copy URL   [R] New Tunnel URL   [Q] Stop & Close{reset}\n")
@@ -251,7 +276,7 @@ def _render_dashboard(
 def main() -> int:
     _enable_ansi()
     parser = argparse.ArgumentParser(description="CMDAI CODE Cloudflare Tunnel Console")
-    parser.add_argument("--mode", choices=["tunnel", "share"], required=True)
+    parser.add_argument("--mode", choices=["tunnel", "share", "live"], required=True)
     parser.add_argument("--backend-port", type=int, default=8080)
     parser.add_argument("--token", default="")
     parser.add_argument("--pin", default="")
@@ -268,7 +293,12 @@ def main() -> int:
 
     if sys.platform == "win32":
         try:
-            title_str = "CMDAI CODE — Remote Tunnel" if args.mode == "tunnel" else "CMDAI CODE — Session Share"
+            if args.mode == "tunnel":
+                title_str = "CMDAI CODE — Remote Tunnel"
+            elif args.mode == "live":
+                title_str = "CMDAI CODE — Live Spectate"
+            else:
+                title_str = "CMDAI CODE — Session Share"
             os.system(f"title {title_str}")
         except Exception:
             pass
@@ -302,11 +332,16 @@ def main() -> int:
                 pass
         if args.mode == "tunnel":
             _revoke_remote_backend(args.backend_port, token)
+        if args.mode == "live":
+            _revoke_live_backend(args.backend_port, token)
         if args.mode == "share" and args.share_file and os.path.isfile(args.share_file):
             try:
                 os.remove(args.share_file)
             except Exception:
                 pass
+
+    import atexit
+    atexit.register(_cleanup)
 
     def _sig_handler(signum, frame):
         _cleanup()
@@ -326,6 +361,27 @@ def main() -> int:
             share_srv, local_port = _start_share_http_server(args.share_file, token)
             local_url = f"http://127.0.0.1:{local_port}"
             route_suffix = f"/s/{token}"
+        elif args.mode == "live":
+            rust_web = get_rust_web_binary()
+            if not rust_web:
+                print("  [!] cmdai-web binary not found. Run cargo build --release in web/ first.")
+                input("\n  Press Enter to close...")
+                return 1
+            web_port = _pick_free_port()
+            web_proc = subprocess.Popen(
+                [
+                    rust_web,
+                    "--host", "127.0.0.1",
+                    "--port", str(web_port),
+                    "--backend", f"127.0.0.1:{args.backend_port}",
+                    "--spectate-token", token,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            time.sleep(0.35)
+            local_url = f"http://127.0.0.1:{web_port}"
+            route_suffix = f"/l/{token}"
         else:
             rust_web = get_rust_web_binary()
             if rust_web:

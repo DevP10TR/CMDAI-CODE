@@ -1165,6 +1165,62 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
                 loaded["transcript"] = []
         return loaded
 
+    def _build_bridge_live_payload(wd: Path) -> Dict[str, Any]:
+        sm = SessionManager(project_dir=str(wd))
+        sessions = sm.list_sessions(str(wd)) or []
+        loaded = sm.load_session(str(sessions[0].get("id"))) if sessions else None
+        if not isinstance(loaded, dict):
+            loaded = {}
+        transcript = loaded.get("transcript") or []
+        messages = loaded.get("messages") or []
+        if not transcript and messages:
+            try:
+                from cmdai.core.sessions import transcript_from_messages
+                transcript = transcript_from_messages(messages)
+            except Exception:
+                transcript = []
+        return {
+            "ok": True,
+            "spectate": True,
+            "session_id": str(loaded.get("id") or (sessions[0].get("id") if sessions else "")),
+            "session_title": str(loaded.get("title") or "CMDAI CODE Live Session"),
+            "model_id": str(loaded.get("model_id") or loaded.get("model") or ""),
+            "mode": str(loaded.get("agent_mode") or "auto"),
+            "is_generating": False,
+            "transcript": transcript,
+            "messages": messages,
+            "streaming_text": "",
+        }
+
+    @app.get("/api/live/state")
+    def get_live_state() -> Dict[str, Any]:
+        return _build_bridge_live_payload(state["workdir"])
+
+    @app.get("/api/live/events")
+    async def stream_live_events(request: Request) -> StreamingResponse:
+        async def _gen():
+            last_raw = ""
+            last_ping = time.monotonic()
+            while True:
+                if await request.is_disconnected():
+                    break
+                payload = _build_bridge_live_payload(state["workdir"])
+                raw_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                if raw_json != last_raw:
+                    last_raw = raw_json
+                    yield f"data: {raw_json}\n\n"
+                    last_ping = time.monotonic()
+                elif time.monotonic() - last_ping >= 15.0:
+                    yield ": ping\n\n"
+                    last_ping = time.monotonic()
+                await asyncio.sleep(0.5)
+
+        return StreamingResponse(
+            _gen(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
+
     @app.delete("/api/sessions/{session_id}")
     def delete_session(session_id: str) -> Dict[str, Any]:
         wd: Path = state["workdir"]

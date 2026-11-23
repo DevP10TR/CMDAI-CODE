@@ -20,6 +20,7 @@ COMMANDS_DOC: Dict[str, str] = {
     "/sessions": "Browse, reopen or delete auto-saved conversations",
     "/tunnel": "Open Rust Web UI & Cloudflare Quick Tunnel with QR code for phone ↔ PC remote control (/tunel)",
     "/share": "Pick & share a session (read-only HTML) in a separate terminal with QR code (remembers last selection)",
+    "/live": "Stream current session live in read-only spectate mode with QR code (/spectate, /live stop)",
     "/unshare": "Stop active session sharing terminal(s)",
     "/browser": "Headless CDP Browser Control (on | off | open <url> | status | close)",
     "/bg": "Background tasks & running subagents manager (Ctrl+B)",
@@ -163,7 +164,7 @@ SHORTCUTS_DOC: Dict[str, Dict[str, str]] = {
 }
 
 HELP_CATEGORIES: List[Tuple[str, List[str]]] = [
-    ("Chat & Sessions", ["/new", "/help", "/sessions", "/summarize", "/stats"]),
+    ("Chat & Sessions", ["/new", "/help", "/sessions", "/summarize", "/stats", "/live"]),
     ("Code Agent & Git", ["/editor", "/git", "/diff", "/commit", "/todo", "/bg", "/mode"]),
     ("Context & Files", ["/cd", "/add", "/drop", "/ctx", "/memory", "/rules"]),
     ("Model & Reasoning", ["/models", "/hf", "/voicemodel", "/modelinfo", "/params", "/system", "/thinking"]),

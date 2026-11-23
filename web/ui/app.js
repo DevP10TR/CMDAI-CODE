@@ -2424,6 +2424,7 @@ function createAssistantTurnCard(modelId, mode, supportsThinking = false) {
   host.appendChild(card);
 
   return {
+    el: card,
     appendThinking(chunk) {
       if (!chunk) return;
       if (!curRawThink && !String(chunk).trim()) return;
@@ -5250,6 +5251,257 @@ function renderQuickOpen(query) {
     });
 }
 
+let _spectateLastSig = "";
+let _spectateEventSource = null;
+let _spectatePollTimer = null;
+let _spectateInFlight = false;
+
+function _markSpectateEnded() {
+  const bar = document.getElementById("spectate-composer-bar");
+  const txt = document.getElementById("spectate-composer-text");
+  const frame = document.querySelector(".composer-shell-frame");
+  bar?.classList.remove("is-active");
+  frame?.classList.remove("spectate-active");
+  if (txt) txt.textContent = "Live stream ended";
+  if (_spectateEventSource) {
+    try { _spectateEventSource.close(); } catch {}
+    _spectateEventSource = null;
+  }
+  if (_spectatePollTimer) {
+    clearInterval(_spectatePollTimer);
+    _spectatePollTimer = null;
+  }
+}
+
+function _formatSpectateStatus(isGen, phase, detail) {
+  if (!isGen) return "Live Spectate · Read-Only — waiting for next prompt";
+  if (phase === "thinking") return "Agent is thinking...";
+  if (phase === "tool") return detail ? `Running ${detail}...` : "Agent is running a tool...";
+  if (phase === "writing") return "Agent is writing live...";
+  return "Agent is preparing response...";
+}
+
+function renderSpectatePayload(data) {
+  if (!data || typeof data !== "object") return;
+  const isGen = Boolean(data.is_generating);
+  const livePhase = String(data.live_phase || (isGen ? "loading" : "idle"));
+  const liveDetail = String(data.live_detail || "");
+  const modelId = String(data.model_id || state.activeModel || "cmdai-code");
+  const mode = String(data.mode || state.mode || "auto");
+
+  const wdEl = document.getElementById("ctx-workdir-label");
+  if (wdEl && data.workdir) {
+    const shortWd = String(data.workdir).split(/[\\/]/).filter(Boolean).pop() || String(data.workdir);
+    wdEl.textContent = shortWd;
+  }
+
+  const compBar = document.getElementById("spectate-composer-bar");
+  const compTxt = document.getElementById("spectate-composer-text");
+  const compModel = document.getElementById("spectate-composer-model");
+  const compMode = document.getElementById("spectate-composer-mode");
+  const shellFrame = document.querySelector(".composer-shell-frame");
+  compBar?.classList.toggle("is-active", isGen);
+  shellFrame?.classList.toggle("spectate-active", isGen);
+  if (compTxt) compTxt.textContent = _formatSpectateStatus(isGen, livePhase, liveDetail);
+  if (compModel) {
+    compModel.textContent = modelId;
+    compModel.classList.toggle("hidden", !String(data.model_id || "").trim());
+  }
+  if (compMode) compMode.textContent = mode;
+
+  const sig = JSON.stringify({
+    t: data.transcript || [],
+    m: data.messages || [],
+    s: data.streaming_text || "",
+    g: isGen,
+    p: livePhase,
+    d: liveDetail,
+  });
+  if (sig === _spectateLastSig) return;
+  _spectateLastSig = sig;
+
+  const sc = document.getElementById("chat-scroll");
+  const nearBottom = !sc || (sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240) || sc.scrollTop === 0;
+
+  const msgsHost = document.getElementById("chat-messages");
+  if (!msgsHost) return;
+  msgsHost.innerHTML = "";
+  const tlDots = document.getElementById("timeline-dots");
+  if (tlDots) tlDots.innerHTML = "";
+  document.getElementById("timeline-rail")?.classList.remove("has-items");
+  hideTimelineTooltip();
+
+  const transcript = Array.isArray(data.transcript) ? data.transcript : [];
+  const messages = Array.isArray(data.messages) ? data.messages : [];
+  const streamingText = String(data.streaming_text || "");
+
+  let curCard = null;
+  let lastAssistantRendered = "";
+  let lastAssistantStreaming = false;
+  const ensureCard = () => {
+    if (!curCard) {
+      curCard = createAssistantTurnCard(modelId, mode, false);
+    }
+    return curCard;
+  };
+
+  if (transcript.length > 0) {
+    for (const ev of transcript) {
+      if (!ev || typeof ev !== "object") continue;
+      if (ev.kind === "user") {
+        curCard = null;
+        lastAssistantRendered = "";
+        lastAssistantStreaming = false;
+        const txt = cleanMessageContent(String(ev.prompt || ev.content || ev.text || ""));
+        const tStr = formatShortTimestamp(ev.time || ev.timestamp || "");
+        if (txt) appendUserBubble(txt, tStr);
+      } else if (ev.kind === "loading") {
+        const c = ensureCard();
+        const lt = c.el?.querySelector(".cli-loading-text");
+        if (lt) lt.textContent = String(ev.text || "Thinking...");
+      } else if (ev.kind === "thinking") {
+        const th = String(ev.text || ev.content || "");
+        if (th.trim()) ensureCard().appendThinking(th);
+      } else if (ev.kind === "tool" || ev.kind === "tool_result") {
+        const c = ensureCard();
+        const tId = `spec_${Math.random().toString(36).slice(2, 7)}`;
+        const tName = ev.tool || ev.name || "tool";
+        const tArgs = ev.target || ev.args || "";
+        const isRunning = Boolean(ev.running);
+        c.startTool({ id: tId, name: tName, args: tArgs, historical: !isRunning });
+        if (!isRunning) {
+          const resObj = ev.result || {};
+          const ok = ev.ok !== false && ev.success !== false && resObj.success !== false;
+          const rawOut = String(resObj.content || resObj.output || resObj.error || ev.preview || ev.content || "").trim();
+          const firstLine = rawOut ? rawOut.split("\n")[0].slice(0, 140) : "";
+          c.finishTool({
+            id: tId,
+            name: tName,
+            args: tArgs,
+            historical: true,
+            ok,
+            summary: ev.summary || firstLine || (ok ? "Completed" : "Failed"),
+            preview: rawOut,
+          });
+        }
+      } else if (ev.kind === "assistant") {
+        const txt = cleanMessageContent(String(ev.text || ev.content || ""));
+        if (txt) {
+          lastAssistantRendered = txt;
+          lastAssistantStreaming = Boolean(ev.streaming);
+          ensureCard().setDone(txt);
+        }
+      }
+    }
+    const cleanStream = cleanMessageContent(streamingText);
+    if (cleanStream && cleanStream !== lastAssistantRendered) {
+      lastAssistantStreaming = isGen;
+      ensureCard().setDone(cleanStream);
+    }
+  } else {
+    for (const m of messages) {
+      if (!m || typeof m !== "object") continue;
+      const rawContent = String(m.content || "");
+      if (m.role === "user") {
+        curCard = null;
+        if (/^\s*<tool_result\b/i.test(rawContent)) continue;
+        const cleanedUser = cleanMessageContent(rawContent);
+        if (cleanedUser) appendUserBubble(cleanedUser);
+      } else if (m.role === "assistant") {
+        curCard = null;
+        const cleanedAssistant = cleanMessageContent(rawContent);
+        if (!cleanedAssistant) continue;
+        const card = createAssistantTurnCard(m.model || modelId, mode, false);
+        card.setDone(cleanedAssistant);
+      }
+    }
+    if (isGen || streamingText.trim()) {
+      const card = ensureCard();
+      const cleanStream = cleanMessageContent(streamingText);
+      if (cleanStream) {
+        lastAssistantStreaming = isGen;
+        card.setDone(cleanStream);
+      }
+    }
+  }
+
+  if (isGen && curCard?.el) {
+    curCard.el.classList.add("is-live-streaming");
+    if (livePhase === "writing" || lastAssistantStreaming) {
+      const mdSegs = curCard.el.querySelectorAll(".turn-flow .turn-md-seg");
+      const lastMd = mdSegs.length ? mdSegs[mdSegs.length - 1] : null;
+      if (lastMd) lastMd.classList.add("streaming-cursor");
+    }
+  }
+
+  const hasAny = transcript.length > 0 || messages.length > 0 || Boolean(streamingText.trim()) || isGen;
+  document.getElementById("hero-welcome")?.classList.toggle("hidden-hero", hasAny);
+  syncChatBottomPadding();
+
+  if (sc && nearBottom) {
+    sc.scrollTop = sc.scrollHeight;
+  }
+}
+
+async function initSpectateMode() {
+  document.body.classList.add("spectate-readonly");
+  document.getElementById("spectate-banner")?.classList.remove("hidden");
+  document.getElementById("spectate-composer-bar")?.classList.remove("hidden");
+  document.getElementById("btn-expand-sidebar")?.classList.remove("hidden");
+
+  const themeBtn = document.getElementById("btn-spectate-theme");
+  const syncThemeBtnLabel = () => {
+    if (themeBtn) themeBtn.textContent = state.theme === "dark" ? "Light Theme" : "Dark Theme";
+  };
+  syncThemeBtnLabel();
+  themeBtn?.addEventListener("click", () => {
+    const next = state.theme === "dark" ? "light" : "dark";
+    applyTheme(next);
+    syncThemeBtnLabel();
+  });
+
+  const fetchLiveOnce = async () => {
+    if (_spectateInFlight) return;
+    _spectateInFlight = true;
+    try {
+      const resp = await fetch("/api/live/state", { cache: "no-store" });
+      if (resp.status === 401 || resp.status === 403) {
+        _markSpectateEnded();
+        return;
+      }
+      if (resp.ok) {
+        renderSpectatePayload(await resp.json());
+      }
+    } catch {
+      // keep retry active
+    } finally {
+      _spectateInFlight = false;
+    }
+  };
+
+  await fetchLiveOnce();
+
+  if (typeof EventSource !== "undefined") {
+    try {
+      _spectateEventSource = new EventSource("/api/live/events");
+      _spectateEventSource.onmessage = (ev) => {
+        try {
+          renderSpectatePayload(JSON.parse(ev.data));
+        } catch {
+          // ignore malformed chunk
+        }
+      };
+      _spectateEventSource.onerror = () => {
+        fetchLiveOnce();
+      };
+    } catch {
+      // fallback polling handles updates
+    }
+  }
+
+  _spectatePollTimer = setInterval(fetchLiveOnce, 350);
+}
+
 async function boot() {
   renderBannerSvgInto(document.getElementById("splash-banner-host"));
   renderBannerSvgInto(document.getElementById("hero-banner-host"));
@@ -5262,6 +5514,17 @@ async function boot() {
   renderTopbarTabs();
   bindEvents();
   mobileUI.init();
+
+  const webMode = window.location.pathname.startsWith("/l/")
+    ? { spectate: true, readonly: true }
+    : await fetch("/api/web/mode").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (webMode && webMode.spectate) {
+    await initSpectateMode();
+    setTimeout(() => {
+      document.getElementById("startup-splash")?.classList.add("fade-out");
+    }, 350);
+    return;
+  }
 
   try {
     await refreshBootstrap();
