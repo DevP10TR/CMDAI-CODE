@@ -613,9 +613,15 @@ class WorkerMixin:
                 self.call_from_thread(self._scroll_chat_to_end_if_enabled)
             self.call_from_thread(self.refresh)
 
+        def _on_shot_captured(cap: Dict[str, Any]) -> None:
+            _call_card("add_shot_capture", cap)
+            if self.current_session_id == worker_session_id:
+                self.call_from_thread(self._scroll_chat_to_end_if_enabled)
+
         if self.agent_runner:
             self.agent_runner.on_tool_start = _on_tool_start
             self.agent_runner.on_tool_finish = _on_tool_finish
+            self.agent_runner.on_shot_captured = _on_shot_captured
             self.agent_runner.ask_handler = self._handle_agent_ask
             self.agent_runner.provider_id = worker_provider
             if hasattr(self.agent_runner, "ctx") and self.agent_runner.ctx is not None:

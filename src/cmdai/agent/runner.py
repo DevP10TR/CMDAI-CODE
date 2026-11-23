@@ -25,6 +25,7 @@ from .tools import (
     tool_read,
     tool_scratch,
     tool_screenshot,
+    tool_shots,
     tool_search,
     tool_vision,
     tool_web,
@@ -235,6 +236,7 @@ class AgentRunner:
         self.on_tool_start = on_tool_start
         self.on_tool_finish = on_tool_finish
         self.on_todo_updated = on_todo_updated
+        self.on_shot_captured: Optional[Callable[[Dict[str, Any]], None]] = None
         self.ask_handler = ask_handler
         self.mcp = mcp_client
         self.permissions = getattr(ctx, "permissions", None)
@@ -1681,23 +1683,77 @@ class AgentRunner:
                 return res
 
             elif name == "screenshot":
-                if not (self.vision_capable and self.vision_capable()):
-                    err_res = {
-                        "success": False,
-                        "error": "The active model does not support vision or image analysis. Screenshot tool is disabled.",
-                        "note": "Switch to a vision-capable multimodal model (e.g. Gemini, GPT-4o, Claude) to capture and inspect screenshots.",
-                    }
-                    if notify and self.on_tool_start:
-                        self.on_tool_start("screenshot", str(args.get("target", "")))
-                    if notify and self.on_tool_finish:
-                        self.on_tool_finish("screenshot", str(args.get("target", "")), err_res)
-                    return err_res
-                target = args.get("target", "active_window")
+                target = str(args.get("target") or args.get("url") or args.get("path") or "auto").strip()
+                sel_arg = str(args.get("selector") or "").strip()
+                dev_arg = str(args.get("device") or "").strip()
+                click_arg = str(args.get("click") or "").strip()
+                fp_raw = args.get("full_page", False)
+                full_page_arg = fp_raw if isinstance(fp_raw, bool) else str(fp_raw).strip().lower() in ("1", "true", "yes")
+                lbl_parts = [target]
+                if sel_arg:
+                    lbl_parts.append(sel_arg)
+                if dev_arg:
+                    lbl_parts.append(dev_arg)
+                lbl_shot = " · ".join(p for p in lbl_parts if p) or "auto"
                 if notify and self.on_tool_start:
-                    self.on_tool_start("screenshot", target)
-                res = tool_screenshot(ctx, target)
+                    self.on_tool_start("screenshot", lbl_shot)
+                res = tool_screenshot(
+                    ctx,
+                    target,
+                    selector=sel_arg,
+                    device=dev_arg,
+                    full_page=full_page_arg,
+                    click=click_arg,
+                )
+                if res.get("success") and not (self.vision_capable and self.vision_capable()):
+                    res["note"] = "Screenshot captured and saved for the user to view in Web Screenshot Viewer (active model is text-only; do not call vision)."
+                res_lbl = str(res.get("target") or lbl_shot).strip()
                 if notify and self.on_tool_finish:
-                    self.on_tool_finish("screenshot", target, res)
+                    self.on_tool_finish("screenshot", res_lbl, res)
+                return res
+
+            elif name == "shots":
+                url_arg = str(args.get("url") or args.get("target") or args.get("path") or "auto").strip()
+                task_arg = str(args.get("task") or args.get("goal") or "").strip()
+                dev_arg = str(args.get("device") or "").strip()
+                mc_raw = args.get("max_captures") or args.get("max_pages") or 8
+                try:
+                    max_cap = max(1, min(12, int(mc_raw))) if mc_raw not in (None, "") else 8
+                except Exception:
+                    max_cap = 8
+                raw_shots = args.get("shots")
+                shots_arg = None
+                if isinstance(raw_shots, str) and raw_shots.strip().startswith("["):
+                    try:
+                        import json as _json_shots
+                        parsed_s = _json_shots.loads(raw_shots)
+                        if isinstance(parsed_s, list):
+                            raw_shots = parsed_s
+                    except Exception:
+                        raw_shots = None
+                if isinstance(raw_shots, list):
+                    shots_arg = [s for s in raw_shots if isinstance(s, dict)] or None
+
+                lbl_shots = url_arg[:37] + "…" if len(url_arg) > 38 else url_arg
+                if shots_arg:
+                    lbl_shots = f"{lbl_shots} ({len(shots_arg)} captures)"
+                if notify and self.on_tool_start:
+                    self.on_tool_start("shots", lbl_shots)
+                res = tool_shots(
+                    ctx,
+                    url=url_arg,
+                    task=task_arg,
+                    device=dev_arg,
+                    max_captures=max_cap,
+                    shots=shots_arg,
+                    on_capture=(self.on_shot_captured if notify else None),
+                )
+                if res.get("success") and not (self.vision_capable and self.vision_capable()):
+                    res["note"] = "Screenshots captured and saved for the user to view in Web Screenshot Viewer (active model is text-only; do not call vision)."
+                raw_res_lbl = str(res.get("target") or url_arg or "shots").strip()
+                res_lbl = raw_res_lbl[:37] + "…" if len(raw_res_lbl) > 38 else raw_res_lbl
+                if notify and self.on_tool_finish:
+                    self.on_tool_finish("shots", res_lbl, res)
                 return res
 
             elif name == "vision":
@@ -1769,9 +1825,9 @@ class AgentRunner:
             display_name = tool_name or name
             target_str = str(args.get("path") or args.get("prompt") or args.get("cmd") or args.get("target") or args.get("url") or "")
             has_vis = bool(self.vision_capable and self.vision_capable())
-            allowed_tools = "read, write, edit, ls, glob, search, command, web, todo, ask, subagent, mcp, memory"
+            allowed_tools = "read, write, edit, ls, glob, search, command, web, todo, ask, subagent, mcp, memory, screenshot, shots"
             if has_vis:
-                allowed_tools += ", screenshot, vision"
+                allowed_tools += ", vision"
             err_res = {
                 "success": False,
                 "error": f"Tool '{display_name}' does not exist and cannot be executed.",
@@ -2214,10 +2270,28 @@ class AgentRunner:
                 lines.append(diff_txt if diff_txt.strip() else "(no diff)")
             else:
                 lines.append(f"git_diff failed: {res.get('error', 'unknown')}")
-        elif name == "screenshot":
-            if res.get("path"):
+        elif name in ("screenshot", "shots"):
+            captures = res.get("captures") or []
+            has_vis = bool(self.vision_capable and self.vision_capable())
+            if res.get("summary"):
+                lines.append(f"Summary: {res['summary']}")
+            if len(captures) > 1 or (name == "shots" and captures):
+                lines.append(f"Captured {len(captures)} screenshots for {res.get('target', 'target')}:")
+                for cap in captures:
+                    c_lbl = cap.get("label") or cap.get("target") or "capture"
+                    c_dims = f"{cap.get('width', 0)}x{cap.get('height', 0)}" if cap.get("width") and cap.get("height") else ""
+                    c_meta = ", ".join(p for p in (cap.get("device"), c_dims, f"{cap.get('size_bytes', 0)} bytes") if p)
+                    lines.append(f"- {c_lbl}: {cap.get('path')} ({c_meta})")
+                if has_vis:
+                    lines.append("To analyze any screenshot visually, call <tool:vision ... /> with its image_path.")
+                else:
+                    lines.append("Saved for the user to view in Web Screenshot Viewer.")
+            elif res.get("path"):
                 lines.append(f"Screenshot saved: {res['path']} ({res.get('size_bytes', 0)} bytes)")
-                lines.append("To analyze it, call <tool:vision ... /> with this image_path.")
+                if has_vis:
+                    lines.append("To analyze it, call <tool:vision ... /> with this image_path.")
+                else:
+                    lines.append("Saved for the user to view in Web Screenshot Viewer.")
             else:
                 lines.append(f"Screenshot failed: {res.get('error', 'unknown')}")
         elif name == "vision":
@@ -2382,9 +2456,10 @@ def _full_tools_block(vision: bool) -> str:
         "13. Spawn Subagent: <tool:subagent name=\"Role\" system=\"instructions for the subagent\">the task it must do</tool:subagent> (optional attribute background=\"true\" to run in background)\n"
         "14. Persistent Memory: <tool:memory action=\"add|list|remove|clear\" scope=\"project|global\" content=\"concise fact\" /> (saves cross-session facts/preferences)\n"
         "15. Git Status / Diff (read-only): <tool:git_status /> and <tool:git_diff path=\"optional_file\" staged=\"false\" />\n"
+        "16. Screenshot (1 image): <tool:screenshot target=\"https://...\" /> (loads any https:// URL, local HTML, selector/click crop, or OS window like 'VS Code'/'screen')\n"
+        "17. Shots (autonomous Screenshot Subagent — like browser, but captures & saves PNGs): <tool:shots url=\"https://...\" task=\"which pages/views/states to visit and capture\" />\n"
         + (
-            "15. Screenshot: <tool:screenshot target=\"active_window\" /> (captures an OS window title or 'active_window'/'desktop' to PNG; never pass a file path like index.html — open it in a browser window first)\n"
-            "16. Vision: <tool:vision image_path=\"path.png\" question=\"what to check\" /> (attaches the image to your next request)\n"
+            "18. Vision: <tool:vision image_path=\"path.png\" question=\"what to check\" /> (attaches the image to your next request)\n"
             if vision else ""
         )
     )
@@ -2399,6 +2474,7 @@ _FULL_DIRECTIVES_BLOCK = (
     "- BACKGROUND EXECUTION (`background=\"true\"`): Only when the user explicitly asks to run a command or subagent in the background, add `background=\"true\"` to `<tool:command cmd=\"...\" background=\"true\" />` or `<tool:subagent name=\"...\" background=\"true\">...</tool:subagent>`.\n"
     "- SUBAGENT CONTRACT: `name` is the short role shown in the UI (e.g. \"Code Reviewer\"). `system` is the prompt you generate for it, so spell out what it must and must not do. The element body is the task itself, and it is the only text the user sees under TASK. Subagents can use every tool you have except spawning more subagents. They cannot ask the user anything, so never give them a task that needs a decision.\n"
     "- AGENT NOTES: a subagent works in its own context. It cannot spawn more subagents and cannot ask the user anything. What reaches you is its final report, plus any notes it chose to send with <tool:agent_note text=\"...\" />, all arriving when the batch finishes. Treat that report as the subagent's answer, synthesize its findings clearly for the user in your own words, and if files were modified, verify with <tool:bugs />.\n"
+    "- SCREENSHOTS: Use `screenshot` for 1 capture or `shots` for multiple views/subpages/interactive captures (both load any `https://` URL or local HTML directly—never use `browser` for screenshots).\n"
     "- Be fast, direct, and proactive: execute the necessary reads, edits, writes, and commands to complete the user request.\n"
     "- Always verify your work with `<tool:bugs />` or `<tool:command>` to ensure zero errors.\n"
 )
@@ -2503,7 +2579,7 @@ def get_agent_system_prompt(workdir: str = ".", mode: str = "auto", vision: bool
         if bool((get_settings().config.get("browser") or {}).get("enabled", False)):
             browser_section = (
                 "\n\n### AUTONOMOUS BROWSER SUBAGENT (ENABLED — SEPARATE CONTEXT)\n"
-                "- Whenever the user asks you to open, preview, test, click through, or visually inspect a web page/app, make ONE SINGLE call:\n"
+                "- Whenever the user asks you to open, preview, test, click through, or visually inspect a web page/app (for screenshots use `screenshot` or `shots`, NOT `browser`), make ONE SINGLE call:\n"
                 "  `<tool:browser url=\"src/index.html\" task=\"Detailed goal of everything to click, test, and inspect\" />`\n"
                 "- **Static frontend apps (index.html / src/index.html with NO backend/server):** NEVER say you cannot run the app because there is no server code! "
                 "Just pass the local file path directly (e.g. `url=\"src/index.html\"` or `url=\"index.html\"`) — `browser` automatically starts a built-in local HTTP server on a random free port (or on `port=\"1010\"` / `url=\"http://127.0.0.1:1010\"` if the user requested a specific port).\n"

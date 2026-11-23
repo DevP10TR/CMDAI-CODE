@@ -823,6 +823,22 @@ def _resolve_browser_url(raw_url: str, workdir: str, port: Optional[int] = None)
     return u
 
 
+_LAST_BROWSER_CONTEXT: Dict[str, str] = {}
+
+
+def _remember_browser_context(url: str, raw_target: str, device: str, workdir: str) -> None:
+    """Remember the latest browser session URL, target label, and viewport device."""
+    u = (url or "").strip()
+    if not u or u == "about:blank":
+        return
+    _LAST_BROWSER_CONTEXT.update({
+        "url": u,
+        "raw_target": (raw_target or u).strip(),
+        "device": (device or "desktop").strip().lower() or "desktop",
+        "workdir": os.path.abspath(workdir or os.getcwd()),
+    })
+
+
 def tool_browser(
     ctx: AgentContext,
     action: str = "run",
@@ -854,64 +870,73 @@ def tool_browser(
     except Exception:
         pass
 
+    raw_url_in = (url or "").strip()
     if url:
         url = _resolve_browser_url(url, ctx.workdir, port=port)
+        _remember_browser_context(url, raw_url_in, device, ctx.workdir)
 
     act = str(action or ("run" if task else "snapshot")).strip().lower()
     if act == "run" or (task and act in ("open", "run", "browse", "test")):
-        return run_browser_agent(
+        res = run_browser_agent(
             task=task or f"Open and inspect {url}",
             url=url,
             workdir=ctx.workdir,
             device=device or "desktop",
             on_step=on_step,
         )
+        try:
+            eng = get_browser_engine()
+            final_url = str(res.get("url") or getattr(eng, "url", "") or url).strip()
+            final_dev = str(getattr(eng, "device", "") or device or "desktop").strip().lower()
+            if final_url:
+                _remember_browser_context(final_url, raw_url_in or final_url, final_dev, ctx.workdir)
+        except Exception:
+            pass
+        return res
 
     eng = get_browser_engine()
+    ephemeral_dir = os.path.join(tempfile.gettempdir(), "cmdai_browser_shots")
+
+    def _queue_ephemeral_frame(prefix: str, question: str) -> bool:
+        if not getattr(eng, "latest_frame", b""):
+            return False
+        try:
+            os.makedirs(ephemeral_dir, exist_ok=True)
+            shot_path = os.path.join(ephemeral_dir, f"{prefix}_{int(time.time() * 1000)}.jpg")
+            with open(shot_path, "wb") as sf:
+                sf.write(eng.latest_frame)
+            eng.register_ephemeral_shot(shot_path)
+            if not hasattr(ctx, "pending_images") or ctx.pending_images is None:
+                ctx.pending_images = []
+            ctx.pending_images.append({"path": shot_path, "question": question})
+            return True
+        except Exception:
+            return False
+
     if act in ("open", "goto", "navigate"):
         res = eng.open_url(url)
-        # Also attach a real visual screenshot right inside `open` so vision models
-        # can inspect the page in ONE single tool call without needing a separate screenshot step!
-        if res.get("success") and eng.latest_frame:
-            try:
-                cache_dir = os.path.join(ctx.workdir, ".cmdai", "browser_shots")
-                os.makedirs(cache_dir, exist_ok=True)
-                shot_path = os.path.join(cache_dir, f"browser_open_{int(time.time() * 1000)}.jpg")
-                with open(shot_path, "wb") as sf:
-                    sf.write(eng.latest_frame)
-                if not hasattr(ctx, "pending_images") or ctx.pending_images is None:
-                    ctx.pending_images = []
-                ctx.pending_images.append({"path": shot_path, "question": "Inspect this browser webpage screenshot."})
-                res["screenshot_attached"] = True
-            except Exception:
-                pass
+        if res.get("success"):
+            _remember_browser_context(eng.url or url, raw_url_in or url, getattr(eng, "device", device), ctx.workdir)
+        # Attach ephemeral working screenshot only for this live browser session; cleaned up on close()
+        if res.get("success") and _queue_ephemeral_frame("browser_open", "Inspect this browser webpage screenshot."):
+            res["screenshot_attached"] = True
         return res
     if act == "snapshot":
         return eng.snapshot()
     if act == "click":
         res = eng.click(index=index, selector=selector, x=x, y=y)
-        if res.get("success") and eng.latest_frame:
-            try:
-                cache_dir = os.path.join(ctx.workdir, ".cmdai", "browser_shots")
-                os.makedirs(cache_dir, exist_ok=True)
-                shot_path = os.path.join(cache_dir, f"browser_click_{int(time.time() * 1000)}.jpg")
-                with open(shot_path, "wb") as sf:
-                    sf.write(eng.latest_frame)
-                if not hasattr(ctx, "pending_images") or ctx.pending_images is None:
-                    ctx.pending_images = []
-                ctx.pending_images.append({"path": shot_path, "question": "Inspect updated browser page after click."})
-            except Exception:
-                pass
+        if res.get("success"):
+            _queue_ephemeral_frame("browser_click", "Inspect updated browser page after click.")
         return res
     if act in ("type", "fill", "input"):
         return eng.type_text(text=text, index=index, selector=selector, submit=submit)
     if act == "scroll":
         return eng.scroll(direction=direction or "down")
     if act == "screenshot":
-        cache_dir = os.path.join(ctx.workdir, ".cmdai", "browser_shots")
-        res = eng.screenshot(save_dir=cache_dir)
+        res = eng.screenshot(save_dir=ephemeral_dir)
         if res.get("success") and res.get("path"):
             try:
+                eng.register_ephemeral_shot(res["path"])
                 if not hasattr(ctx, "pending_images") or ctx.pending_images is None:
                     ctx.pending_images = []
                 ctx.pending_images.append({"path": res["path"], "question": "Inspect this browser webpage screenshot."})
@@ -1181,56 +1206,966 @@ SCREENSHOT_MAX_DIM = 1920
 
 
 def _screenshot_dir() -> str:
-    import tempfile
-    d = os.path.join(tempfile.gettempdir(), "cmdai_screenshots")
-    os.makedirs(d, exist_ok=True)
-    return d
+    try:
+        d = os.path.join(os.path.expanduser("~"), ".cmdai", "screenshots")
+        os.makedirs(d, exist_ok=True)
+        return d
+    except Exception:
+        import tempfile
+        d = os.path.join(tempfile.gettempdir(), "cmdai_screenshots")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+
+def _hwnd_rect(user32: Any, wintypes_mod: Any, ctypes_mod: Any, hwnd: Any) -> Optional[Dict[str, int]]:
+    """Return a visible, non-minimized window's screen bounding rectangle or None."""
+    if not hwnd or not user32.IsWindowVisible(hwnd):
+        return None
+    rc = wintypes_mod.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes_mod.byref(rc)):
+        return None
+    if rc.left <= -30000 or rc.top <= -30000:
+        return None
+    w = int(rc.right - rc.left)
+    h = int(rc.bottom - rc.top)
+    if w <= 50 or h <= 50:
+        return None
+    return {"left": int(rc.left), "top": int(rc.top), "width": w, "height": h}
+
+
+def _list_visible_windows() -> List[Dict[str, Any]]:
+    """Enumerate visible, non-minimized Windows top-level windows via user32."""
+    if os.name != "nt":
+        return []
+    try:
+        import ctypes as _ctypes
+        from ctypes import wintypes as _wintypes
+
+        user32 = _ctypes.windll.user32
+        wins: List[Dict[str, Any]] = []
+        enum_proc = _ctypes.WINFUNCTYPE(_wintypes.BOOL, _wintypes.HWND, _wintypes.LPARAM)
+
+        def _cb(hwnd: Any, _lparam: Any) -> bool:
+            length = int(user32.GetWindowTextLengthW(hwnd) or 0)
+            if length <= 0:
+                return True
+            buf = _ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            title = (buf.value or "").strip()
+            if not title:
+                return True
+            rc_dict = _hwnd_rect(user32, _wintypes, _ctypes, hwnd)
+            if rc_dict:
+                wins.append({"title": title, **rc_dict})
+            return True
+
+        user32.EnumWindows(enum_proc(_cb), 0)
+        return wins
+    except Exception:
+        return []
+
+
+def _match_window_from_list(windows: List[Dict[str, Any]], title_sub: str) -> Optional[Dict[str, int]]:
+    """Match a visible window by exact/substring title or >=4-char word fallback (e.g. 'Gravity' -> 'Antigravity')."""
+    needle = (title_sub or "").strip().lower()
+    if not needle or not windows:
+        return None
+    wants_cli = any(k in needle for k in ("cmdai", "terminal", "powershell"))
+
+    def _is_cli_win(t_low: str) -> bool:
+        return t_low.startswith("cc •") or "cmdai code" in t_low
+
+    def _rect_only(w: Dict[str, Any]) -> Dict[str, int]:
+        return {"left": w["left"], "top": w["top"], "width": w["width"], "height": w["height"]}
+
+    # Stage 1: Exact / direct substring match
+    for w in windows:
+        t_low = w["title"].lower()
+        if not wants_cli and _is_cli_win(t_low):
+            continue
+        if needle in t_low:
+            return _rect_only(w)
+
+    # Stage 2: Fuzzy >=4-char word fallback (skip generic UI words like 'window'/'app')
+    words = [tok for tok in re.findall(r"[a-z0-9]{4,}", needle) if tok not in ("window", "desktop", "screen", "okno", "aplikacja")]
+    for w in windows:
+        t_low = w["title"].lower()
+        if not wants_cli and _is_cli_win(t_low):
+            continue
+        if any(tok in t_low for tok in words):
+            return _rect_only(w)
+    return None
 
 
 def _find_window_rect(title_sub: str = "") -> Optional[Dict[str, int]]:
+    """Find the screen bounding rectangle of the foreground or title-matching visible Windows window via user32."""
     if os.name != "nt":
         return None
     try:
-        import win32gui
-    except ImportError:
-        return None
-    needle = (title_sub or "").strip().lower()
-    found: Dict[str, int] = {}
+        import ctypes as _ctypes
+        from ctypes import wintypes as _wintypes
 
-    def _cb(hwnd, _):
-        if not win32gui.IsWindowVisible(hwnd):
-            return
-        try:
-            text = win32gui.GetWindowText(hwnd) or ""
-        except Exception:
-            return
-        if needle and needle not in text.lower():
-            return
-        try:
-            l, t, r, b = win32gui.GetWindowRect(hwnd)
-        except Exception:
-            return
-        if r - l > 50 and b - t > 50 and not found:
-            found.update({"left": l, "top": t, "width": r - l, "height": b - t})
-
-    try:
+        user32 = _ctypes.windll.user32
+        needle = (title_sub or "").strip()
         if not needle:
-            import win32gui as _wg
-            hwnd = _wg.GetForegroundWindow()
-            l, t, r, b = _wg.GetWindowRect(hwnd)
-            if r - l > 50 and b - t > 50:
-                return {"left": l, "top": t, "width": r - l, "height": b - t}
-            return None
-        win32gui.EnumWindows(_cb, None)
+            return _hwnd_rect(user32, _wintypes, _ctypes, user32.GetForegroundWindow())
+
+        return _match_window_from_list(_list_visible_windows(), needle)
     except Exception:
         return None
-    return found or None
 
 
-def tool_screenshot(ctx: AgentContext, target: str = "active_window") -> Dict[str, Any]:
+def _find_workspace_html(workdir: str) -> str:
+    """Return the first likely entry HTML file relative to workdir, or '' if none exists."""
+    base = os.path.abspath(workdir or os.getcwd())
+    if not os.path.isdir(base):
+        return ""
+    for rel in ("index.html", "src/index.html", "public/index.html", "dist/index.html", "app/index.html", "web/index.html"):
+        if os.path.isfile(os.path.join(base, rel.replace("/", os.sep))):
+            return rel
+    try:
+        for entry in sorted(os.listdir(base)):
+            if entry.lower().endswith((".html", ".htm")) and os.path.isfile(os.path.join(base, entry)):
+                return entry
+    except OSError:
+        pass
+    return ""
+
+
+_SETTLE_DOM_JS = """
+(async () => {
+  try {
+    if (document.fonts && document.fonts.ready) {
+      await Promise.race([document.fonts.ready, new Promise(r => setTimeout(r, 1200))]);
+    }
+  } catch (e) {}
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  return true;
+})()
+"""
+
+
+def _capture_from_engine(
+    eng: Any,
+    out_path: str,
+    *,
+    selector: str = "",
+    full_page: bool = False,
+    click: str = "",
+) -> Dict[str, Any]:
+    """Capture a crisp PNG screenshot from an already-opened BrowserEngine."""
+    import base64
+    import json as _json
+
+    eng._run_coro(eng._eval_js_async(_SETTLE_DOM_JS), timeout=6.0)
+
+    clk = (click or "").strip()
+    clicked_ok = False
+    if clk:
+        clk_js = f"""
+        (() => {{
+          const raw = {_json.dumps(clk)};
+          let el = null;
+          try {{ el = document.querySelector(raw); }} catch (e) {{}}
+          if (!el) {{
+            const q = raw.toLowerCase();
+            const isVis = (n) => {{
+              if (!n || n.offsetParent === null && getComputedStyle(n).position !== 'fixed') return false;
+              const r = n.getBoundingClientRect();
+              return r.width > 4 && r.height > 4;
+            }};
+            const cands = Array.from(document.querySelectorAll(
+              "button, a, [role='tab'], [role='button'], summary, label, input[type='submit'], input[type='button'], [onclick], [data-tab], li"
+            )).filter(isVis);
+            const txtOf = (n) => ((n.innerText || n.textContent || n.getAttribute('aria-label') || n.getAttribute('title') || n.value || '').trim().replace(/\\s+/g, ' ').toLowerCase());
+            el = cands.find(n => txtOf(n) === q) || cands.find(n => txtOf(n).includes(q));
+          }}
+          if (!el) return false;
+          try {{ el.scrollIntoView({{block: 'center', inline: 'center'}}); }} catch (e) {{}}
+          el.click();
+          return true;
+        }})()
+        """
+        clicked_ok = bool(eng._run_coro(eng._eval_js_async(clk_js), timeout=8.0))
+        if clicked_ok:
+            time.sleep(0.35)
+            eng._run_coro(eng._eval_js_async(_SETTLE_DOM_JS), timeout=6.0)
+
+    clip: Optional[Dict[str, Any]] = None
+    sel = (selector or "").strip()
+    sel_matched = False
+    if sel:
+        sel_js = f"""
+        (() => {{
+          const raw = {_json.dumps(sel)};
+          let el = null;
+          try {{ el = document.querySelector(raw); }} catch (e) {{}}
+          if (!el) {{
+            const q = raw.replace(/^[#.]+/, '').trim().toLowerCase();
+            if (q) {{
+              const bad = new Set(['HTML', 'BODY', 'SCRIPT', 'STYLE', 'HEAD']);
+              const isGoodBox = (n, minW, minH, maxH) => {{
+                if (!n || bad.has(n.tagName)) return false;
+                const r = n.getBoundingClientRect();
+                return r.width >= minW && r.height >= minH && r.height <= maxH;
+              }};
+              const all = Array.from(document.querySelectorAll('*')).filter(n => !bad.has(n.tagName));
+              el = all.find(n => {{
+                const attrs = [
+                  n.id || '',
+                  n.getAttribute('data-testid') || '',
+                  n.getAttribute('aria-label') || '',
+                  typeof n.className === 'string' ? n.className : '',
+                ].join(' ').toLowerCase();
+                return attrs.includes(q) && isGoodBox(n, 40, 24, 2000);
+              }});
+              if (!el) {{
+                const heads = Array.from(document.querySelectorAll(
+                  "h1,h2,h3,h4,h5,h6,legend,label,th,summary,[class*='title'],[class*='heading'],[class*='header']"
+                ));
+                const txtOf = (n) => ((n.innerText || n.textContent || '').trim().replace(/\\s+/g, ' ').toLowerCase());
+                let anchor = heads.find(n => txtOf(n) === q) || heads.find(n => txtOf(n).includes(q));
+                if (!anchor) {{
+                  anchor = all.find(n => {{
+                    if (!isGoodBox(n, 40, 18, 1200)) return false;
+                    const t = txtOf(n);
+                    return t && t.length <= 160 && t.includes(q);
+                  }});
+                }}
+                if (anchor) {{
+                  let cur = anchor;
+                  let picked = null;
+                  for (let i = 0; i < 6 && cur && !bad.has(cur.tagName); i++) {{
+                    const tag = cur.tagName.toLowerCase();
+                    const cls = (typeof cur.className === 'string' ? cur.className : '').toLowerCase();
+                    const role = (cur.getAttribute('role') || '').toLowerCase();
+                    const isContainer = (
+                      ['section', 'form', 'article', 'main', 'dialog', 'aside'].includes(tag) ||
+                      role === 'dialog' || role === 'tabpanel' ||
+                      /(card|panel|modal|box|widget|container|tab|view|chart|section)/.test(cls)
+                    );
+                    if (isContainer && isGoodBox(cur, 80, 40, 2000)) {{
+                      picked = cur;
+                      break;
+                    }}
+                    cur = cur.parentElement;
+                  }}
+                  el = picked || (isGoodBox(anchor, 40, 20, 2000) ? anchor : anchor.parentElement);
+                }}
+              }}
+            }}
+          }}
+          if (!el) return null;
+          try {{ el.scrollIntoView({{block: 'center', inline: 'center'}}); }} catch (e) {{}}
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) return null;
+          return {{
+            x: Math.max(0, Math.round(r.left + window.scrollX - 14)),
+            y: Math.max(0, Math.round(r.top + window.scrollY - 14)),
+            width: Math.max(40, Math.round(r.width + 28)),
+            height: Math.max(40, Math.round(r.height + 28)),
+            scale: 1
+          }};
+        }})()
+        """
+        box = eng._run_coro(eng._eval_js_async(sel_js), timeout=8.0)
+        if isinstance(box, dict) and box.get("width", 0) > 0:
+            clip = box
+            sel_matched = True
+            eng._run_coro(eng._eval_js_async(_SETTLE_DOM_JS), timeout=4.0)
+
+    cdp_params: Dict[str, Any] = {"format": "png"}
+    if clip:
+        cdp_params["clip"] = clip
+        cdp_params["captureBeyondViewport"] = True
+    elif full_page:
+        fp_js = """
+        (() => {
+          const de = document.documentElement;
+          const b = document.body;
+          const w = Math.max(de ? de.scrollWidth : 0, b ? b.scrollWidth : 0, window.innerWidth || 1280);
+          const h = Math.min(6000, Math.max(de ? de.scrollHeight : 0, b ? b.scrollHeight : 0, window.innerHeight || 800));
+          return { x: 0, y: 0, width: Math.max(100, w), height: Math.max(100, h), scale: 1 };
+        })()
+        """
+        fp_box = eng._run_coro(eng._eval_js_async(fp_js), timeout=6.0)
+        if isinstance(fp_box, dict) and fp_box.get("height", 0) > 0:
+            cdp_params["clip"] = fp_box
+            cdp_params["captureBeyondViewport"] = True
+
+    res_shot = eng._run_coro(eng._send_cdp("Page.captureScreenshot", cdp_params), timeout=18.0) or {}
+    b64 = res_shot.get("data") or ""
+    if not b64:
+        return {"success": False, "error": "Empty screenshot data from headless browser"}
+    with open(out_path, "wb") as f:
+        f.write(base64.b64decode(b64))
+    size = os.path.getsize(out_path)
+    if size > SCREENSHOT_MAX_BYTES * 2:
+        try:
+            from PIL import Image
+            img = Image.open(out_path)
+            img.save(out_path, "PNG", optimize=True)
+            size = os.path.getsize(out_path)
+        except Exception:
+            pass
+    img_w, img_h = _read_png_dimensions(out_path)
+    out_meta: Dict[str, Any] = {
+        "success": True,
+        "path": out_path,
+        "size_bytes": size,
+        "width": img_w,
+        "height": img_h,
+        "selector": sel if sel_matched else "",
+        "click": clk if clicked_ok else "",
+        "full_page": bool(full_page and not sel_matched),
+    }
+    if sel and not sel_matched:
+        out_meta["note"] = f"Selector '{sel}' was not found; captured the full viewport instead."
+    if clk and not clicked_ok:
+        prev = out_meta.get("note", "")
+        out_meta["note"] = (prev + " " if prev else "") + f"Click target '{clk}' was not found."
+    return out_meta
+
+
+def _read_png_dimensions(path: str) -> Tuple[int, int]:
+    """Read (width, height) from a PNG header, falling back to PIL or (0, 0)."""
+    import struct
+    try:
+        with open(path, "rb") as f:
+            hdr = f.read(24)
+        if len(hdr) >= 24 and hdr[:8] == b"\x89PNG\r\n\x1a\n" and hdr[12:16] == b"IHDR":
+            w, h = struct.unpack(">II", hdr[16:24])
+            return int(w), int(h)
+    except Exception:
+        pass
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            return int(im.size[0]), int(im.size[1])
+    except Exception:
+        return 0, 0
+
+
+def _viewport_spec(device: str) -> Tuple[int, int, bool, str]:
+    dev = (device or "").strip().lower()
+    if dev in ("mobile", "phone", "iphone", "smartphone"):
+        return 390, 844, True, "mobile"
+    if dev in ("tablet", "ipad"):
+        return 768, 1024, True, "tablet"
+    return 1280, 800, False, "desktop"
+
+
+def _apply_crisp_viewport(eng: Any, w: int, h: int, mob: bool) -> None:
+    """Enforce 2x Retina deviceScaleFactor on both desktop and mobile viewports."""
+    try:
+        eng._run_coro(
+            eng._send_cdp(
+                "Emulation.setDeviceMetricsOverride",
+                {"width": w, "height": h, "deviceScaleFactor": 2, "mobile": mob},
+            ),
+            timeout=6.0,
+        )
+    except Exception:
+        pass
+
+
+def _capture_web_screenshot(
+    workdir: str,
+    target: str,
+    selector: str = "",
+    device: str = "",
+    full_page: bool = False,
+    click: str = "",
+    display_label: str = "",
+) -> Dict[str, Any]:
+    """Capture a crisp 2x headless screenshot of a web URL, local HTML file, or specific element."""
     import uuid
-    target = (target or "active_window").strip()
-    rect = _find_window_rect("" if target.lower() == "active_window" else target)
+    from ..browser.engine import BrowserEngine
+
+    resolved_url = _resolve_browser_url(target, workdir)
+    if not resolved_url.lower().startswith(("http://", "https://", "file://")):
+        return {"success": False, "error": f"HTML file or URL not found in workspace: {target}"}
+
+    out = os.path.join(_screenshot_dir(), f"{uuid.uuid4().hex}.png")
+    w, h, mob, norm_dev = _viewport_spec(device)
+
+    eng = BrowserEngine(width=w, height=h, mobile=mob)
+    try:
+        r_open = eng.open_url(resolved_url)
+        if not r_open.get("success"):
+            return {"success": False, "error": r_open.get("error") or f"Failed to open {resolved_url}"}
+        _apply_crisp_viewport(eng, w, h, mob)
+        time.sleep(0.35)
+        cap = _capture_from_engine(eng, out, selector=selector, full_page=full_page, click=click)
+        if not cap.get("success"):
+            return cap
+        cap.update({
+            "target": display_label or target,
+            "resolved_url": resolved_url,
+            "device": norm_dev,
+            "source": "headless_browser",
+        })
+        return cap
+    except Exception as exc:
+        return {"success": False, "error": f"web screenshot failed: {exc}"}
+    finally:
+        eng.close()
+
+
+def _capture_live_browser(
+    out_path: str,
+    eng: Any,
+    *,
+    selector: str = "",
+    full_page: bool = False,
+    click: str = "",
+) -> Dict[str, Any]:
+    """Capture directly from the currently running BrowserEngine instance without closing it."""
+    try:
+        cap = _capture_from_engine(eng, out_path, selector=selector, full_page=full_page, click=click)
+        if not cap.get("success"):
+            return cap
+        raw_lbl = (_LAST_BROWSER_CONTEXT.get("raw_target") or getattr(eng, "url", "") or "browser").strip()
+        lbl = raw_lbl if raw_lbl.startswith("browser") else f"browser · {raw_lbl}"
+        cap.update({
+            "target": lbl,
+            "resolved_url": getattr(eng, "url", ""),
+            "device": getattr(eng, "device", "desktop") or "desktop",
+            "source": "live_browser",
+        })
+        return cap
+    except Exception as exc:
+        return {"success": False, "error": f"live browser screenshot failed: {exc}"}
+
+
+def _resolve_smart_web_source(ctx: AgentContext, target: str) -> Optional[Tuple[str, str, str]]:
+    """Resolve a target string to (url_or_path, workdir, display_label) if it maps to a web source."""
+    t = (target or "auto").strip()
+    low_t = t.lower()
+    if low_t.startswith(("http://", "https://", "file://")) or low_t.endswith((".html", ".htm")):
+        return _resolve_browser_url(t, ctx.workdir), ctx.workdir, t
+
+    if low_t in ("browser", "last_browser", "current_page", "current_tab", "auto", "app", "page", "site", "web", "current", "last", ""):
+        try:
+            from ..browser import get_browser_engine
+            eng = get_browser_engine()
+            if getattr(eng, "running", False) and getattr(eng, "url", "") not in ("", "about:blank"):
+                raw_tgt = _LAST_BROWSER_CONTEXT.get("raw_target") or str(eng.url)
+                return str(eng.url), ctx.workdir, f"browser · {raw_tgt}" if not str(raw_tgt).startswith("browser") else str(raw_tgt)
+        except Exception:
+            pass
+        last_url = str(_LAST_BROWSER_CONTEXT.get("url") or "").strip()
+        if last_url:
+            eff_work = _LAST_BROWSER_CONTEXT.get("workdir") or ctx.workdir
+            raw_tgt = _LAST_BROWSER_CONTEXT.get("raw_target") or last_url
+            cand = last_url
+            try:
+                import urllib.parse
+                parsed = urllib.parse.urlparse(last_url)
+                if (parsed.hostname or "").lower() in ("127.0.0.1", "localhost", "::1") and parsed.port:
+                    if not _is_local_port_open(int(parsed.port)) and raw_tgt:
+                        cand = _resolve_browser_url(raw_tgt, eff_work)
+            except Exception:
+                pass
+            lbl = raw_tgt if str(raw_tgt).startswith("browser") else f"browser · {raw_tgt}"
+            return cand, eff_work, lbl
+        ws_html = _find_workspace_html(ctx.workdir)
+        if ws_html:
+            return _resolve_browser_url(ws_html, ctx.workdir), ctx.workdir, ws_html
+    return None
+
+
+def _run_smart_shots(
+    ctx: AgentContext,
+    outer_target: str,
+    default_selector: str,
+    default_device: str,
+    default_full_page: bool,
+    default_click: str,
+    shots: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Execute Mode 2 (Smart interactive/multi-view sequence) reusing one BrowserEngine per URL."""
+    import uuid
+    from ..browser.engine import BrowserEngine
+
+    captures: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    eng: Any = None
+    cur_url = ""
+    cur_dev = ""
+
+    def _close_pool() -> None:
+        nonlocal eng, cur_url, cur_dev
+        if eng is not None:
+            try:
+                eng.close()
+            except Exception:
+                pass
+            eng = None
+            cur_url = ""
+            cur_dev = ""
+
+    try:
+        for item in shots[:12]:
+            if not isinstance(item, dict):
+                continue
+            s_target = str(item.get("target") or outer_target or "auto").strip()
+            s_sel = str(item.get("selector") or default_selector or "").strip()
+            s_dev = str(item.get("device") or default_device or "").strip().lower()
+            s_clk = str(item.get("click") or default_click or "").strip()
+            fp_raw = item.get("full_page", default_full_page)
+            s_full = fp_raw if isinstance(fp_raw, bool) else str(fp_raw).strip().lower() in ("1", "true", "yes")
+            s_label = str(item.get("label") or item.get("name") or s_sel or s_clk or s_dev or s_target).strip()
+
+            web_src = _resolve_smart_web_source(ctx, s_target)
+            if web_src is not None and web_src[0].lower().startswith(("http://", "https://", "file://")):
+                resolved_url, _eff_work, disp_tgt = web_src
+                w, h, mob, norm_dev = _viewport_spec(s_dev or _LAST_BROWSER_CONTEXT.get("device", ""))
+                if eng is None or cur_url != resolved_url:
+                    _close_pool()
+                    eng = BrowserEngine(width=w, height=h, mobile=mob)
+                    r_open = eng.open_url(resolved_url)
+                    if not r_open.get("success"):
+                        errors.append(f"{s_label}: {r_open.get('error') or 'failed to load URL'}")
+                        _close_pool()
+                        continue
+                    _apply_crisp_viewport(eng, w, h, mob)
+                    time.sleep(0.35)
+                    cur_url = resolved_url
+                    cur_dev = norm_dev
+                elif norm_dev != cur_dev:
+                    eng.set_viewport(device=norm_dev)
+                    _apply_crisp_viewport(eng, w, h, mob)
+                    time.sleep(0.25)
+                    cur_dev = norm_dev
+
+                out_p = os.path.join(_screenshot_dir(), f"{uuid.uuid4().hex}.png")
+                cap = _capture_from_engine(eng, out_p, selector=s_sel, full_page=s_full, click=s_clk)
+                if not cap.get("success"):
+                    errors.append(f"{s_label}: {cap.get('error') or 'capture failed'}")
+                    continue
+                captures.append({
+                    "label": s_label,
+                    "path": cap["path"],
+                    "target": disp_tgt,
+                    "device": norm_dev,
+                    "width": cap.get("width", 0),
+                    "height": cap.get("height", 0),
+                    "size_bytes": cap.get("size_bytes", 0),
+                    "selector": cap.get("selector", ""),
+                    "click": cap.get("click", ""),
+                    "full_page": cap.get("full_page", False),
+                })
+            else:
+                _close_pool()
+                single = tool_screenshot(
+                    ctx,
+                    target=s_target,
+                    selector=s_sel,
+                    device=s_dev,
+                    full_page=s_full,
+                    click=s_clk,
+                )
+                if not single.get("success"):
+                    errors.append(f"{s_label}: {single.get('error') or 'capture failed'}")
+                    continue
+                captures.append({
+                    "label": s_label,
+                    "path": single["path"],
+                    "target": single.get("target") or s_target,
+                    "device": single.get("device") or s_dev or "",
+                    "width": single.get("width", 0),
+                    "height": single.get("height", 0),
+                    "size_bytes": single.get("size_bytes", 0),
+                    "selector": single.get("selector", ""),
+                    "click": single.get("click", ""),
+                    "full_page": single.get("full_page", False),
+                })
+    finally:
+        _close_pool()
+
+    if not captures:
+        return {"success": False, "error": "; ".join(errors) or "No screenshots captured."}
+
+    outer_lbl = (outer_target or "").strip()
+    if outer_lbl.lower() in ("auto", "app", "page", "site", "web", "current", "last", ""):
+        outer_lbl = captures[0].get("target") or "screenshot"
+
+    out_res: Dict[str, Any] = {
+        "success": True,
+        "path": captures[0]["path"],
+        "size_bytes": sum(int(c.get("size_bytes", 0) or 0) for c in captures),
+        "width": captures[0].get("width", 0),
+        "height": captures[0].get("height", 0),
+        "target": outer_lbl,
+        "captures": captures,
+        "count": len(captures),
+        "source": "smart_screenshot",
+    }
+    if errors:
+        out_res["warnings"] = errors
+    return out_res
+
+
+_SUBPAGE_LINKS_JS = """
+(() => {
+  const origin = location.origin;
+  const curNorm = (location.origin + location.pathname).replace(/\\/+$/, '') + location.search;
+  const badExt = /\\.(pdf|zip|rar|7z|gz|tar|jpg|jpeg|png|gif|webp|svg|ico|mp4|mp3|wav|docx?|xlsx?|pptx?|csv)(\\?|$)/i;
+  const badLbl = /^(skip to content|przejdź do treści|menu|close|zamknij|#)$/i;
+
+  const collect = (sel) => Array.from(document.querySelectorAll(sel));
+  let links = collect("nav a[href], header a[href], [role='navigation'] a[href], .menu a[href], .navbar a[href]");
+  if (links.length < 2) {
+    links = links.concat(collect("main a[href], a[href]"));
+  }
+
+  const seen = new Set([curNorm]);
+  const out = [];
+  for (const a of links) {
+    const rawHref = (a.getAttribute('href') || '').trim();
+    if (!rawHref || rawHref.startsWith('#') || /^(mailto:|tel:|javascript:|data:)/i.test(rawHref)) continue;
+    let u;
+    try { u = new URL(rawHref, location.href); } catch (e) { continue; }
+    if (u.origin !== origin) continue;
+    if (badExt.test(u.pathname + u.search)) continue;
+    const norm = (u.origin + u.pathname).replace(/\\/+$/, '') + u.search;
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    const txt = (a.innerText || a.textContent || a.getAttribute('aria-label') || a.getAttribute('title') || '').trim().replace(/\\s+/g, ' ');
+    let label = txt;
+    if (!label || badLbl.test(label)) {
+      label = u.pathname.replace(/^\\/|\\/$/g, '').split('/').pop() || u.pathname;
+    }
+    if (!label) label = u.pathname;
+    out.push({ url: u.origin + u.pathname + u.search, label: label.slice(0, 48) });
+    if (out.length >= 24) break;
+  }
+  return out;
+})()
+"""
+
+
+def _short_page_label(title: str, fallback: str = "Home") -> str:
+    raw = (title or "").strip()
+    if not raw:
+        return fallback
+    for sep in (" | ", " - ", " — ", " – ", " :: "):
+        if sep in raw:
+            raw = raw.split(sep, 1)[0].strip()
+            break
+    return (raw or fallback)[:48]
+
+
+def _run_subpages_shots(
+    ctx: AgentContext,
+    target: str,
+    device: str = "",
+    full_page: bool = False,
+    max_pages: int = 6,
+) -> Dict[str, Any]:
+    """Automatically capture homepage + discovered navigation subpages in one Chromium pass."""
+    import uuid
+    from ..browser.engine import BrowserEngine
+
+    cap_limit = max(2, min(10, int(max_pages or 6)))
+    web_src = _resolve_smart_web_source(ctx, target)
+    if web_src is None or not web_src[0].lower().startswith(("http://", "https://", "file://")):
+        return {"success": False, "error": f"Cannot discover subpages for target: {target}"}
+
+    resolved_url, _eff_w, disp_tgt = web_src
+    w, h, mob, norm_dev = _viewport_spec(device or _LAST_BROWSER_CONTEXT.get("device", ""))
+    eng = BrowserEngine(width=w, height=h, mobile=mob)
+    captures: List[Dict[str, Any]] = []
+    errors: List[str] = []
+
+    try:
+        r_open = eng.open_url(resolved_url)
+        if not r_open.get("success"):
+            return {"success": False, "error": r_open.get("error") or f"Failed to open {resolved_url}"}
+        _apply_crisp_viewport(eng, w, h, mob)
+        time.sleep(0.35)
+
+        home_lbl = _short_page_label(getattr(eng, "title", ""), fallback="Home")
+        out_home = os.path.join(_screenshot_dir(), f"{uuid.uuid4().hex}.png")
+        c_home = _capture_from_engine(eng, out_home, full_page=full_page)
+        if c_home.get("success"):
+            captures.append({
+                "label": home_lbl,
+                "path": c_home["path"],
+                "target": disp_tgt,
+                "device": norm_dev,
+                "width": c_home.get("width", 0),
+                "height": c_home.get("height", 0),
+                "size_bytes": c_home.get("size_bytes", 0),
+                "selector": "",
+                "full_page": c_home.get("full_page", False),
+            })
+
+        try:
+            sub_links = eng._run_coro(eng._eval_js_async(_SUBPAGE_LINKS_JS), timeout=8.0) or []
+        except Exception:
+            sub_links = []
+
+        for link in list(sub_links)[: max(0, cap_limit - 1)]:
+            if not isinstance(link, dict) or not link.get("url"):
+                continue
+            sub_url = str(link["url"]).strip()
+            sub_lbl = str(link.get("label") or sub_url).strip()[:48]
+            r_sub = eng.open_url(sub_url)
+            if not r_sub.get("success"):
+                errors.append(f"{sub_lbl}: {r_sub.get('error') or 'failed to load'}")
+                continue
+            _apply_crisp_viewport(eng, w, h, mob)
+            time.sleep(0.35)
+            out_sub = os.path.join(_screenshot_dir(), f"{uuid.uuid4().hex}.png")
+            c_sub = _capture_from_engine(eng, out_sub, full_page=full_page)
+            if c_sub.get("success"):
+                captures.append({
+                    "label": sub_lbl,
+                    "path": c_sub["path"],
+                    "target": disp_tgt,
+                    "device": norm_dev,
+                    "width": c_sub.get("width", 0),
+                    "height": c_sub.get("height", 0),
+                    "size_bytes": c_sub.get("size_bytes", 0),
+                    "selector": "",
+                    "full_page": c_sub.get("full_page", False),
+                })
+            else:
+                errors.append(f"{sub_lbl}: {c_sub.get('error') or 'capture failed'}")
+    finally:
+        eng.close()
+
+    if not captures:
+        return {"success": False, "error": "; ".join(errors) or f"Failed to capture {target}"}
+
+    res: Dict[str, Any] = {
+        "success": True,
+        "path": captures[0]["path"],
+        "size_bytes": sum(int(c.get("size_bytes", 0) or 0) for c in captures),
+        "width": captures[0].get("width", 0),
+        "height": captures[0].get("height", 0),
+        "target": disp_tgt,
+        "captures": captures,
+        "count": len(captures),
+        "source": "subpages_shots",
+    }
+    if errors:
+        res["warnings"] = errors
+    return res
+
+
+def tool_shots(
+    ctx: AgentContext,
+    url: str = "",
+    target: str = "",
+    task: str = "",
+    device: str = "",
+    max_captures: int = 8,
+    shots: Optional[List[Dict[str, Any]]] = None,
+    subpages: bool = False,
+    max_pages: int = 6,
+    full_page: bool = False,
+    on_capture: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
+    """Launch the isolated autonomous Shots Subagent (like browser, specialized in crisp 2x screenshots)."""
+    raw_url = (url or target or "auto").strip()
+    tsk = (task or "").strip()
+    dev = (device or "").strip().lower()
+    cap_limit = max(1, min(12, int(max_captures or max_pages or 8)))
+
+    if shots and isinstance(shots, list):
+        valid_shots = [s for s in shots if isinstance(s, dict)]
+        if valid_shots:
+            return _run_smart_shots(
+                ctx,
+                outer_target=raw_url,
+                default_selector="",
+                default_device=dev,
+                default_full_page=full_page,
+                default_click="",
+                shots=valid_shots,
+            )
+
+    from ..browser.shots_agent import run_shots_agent
+    web_src = _resolve_smart_web_source(ctx, raw_url)
+    if web_src is not None and web_src[0].lower().startswith(("http://", "https://", "file://")):
+        resolved_url, _eff_w, disp_tgt = web_src
+        eff_task = tsk or f"Visit {disp_tgt} and capture crisp screenshots of the main page and key views or subpages."
+        return run_shots_agent(
+            task=eff_task,
+            url=resolved_url,
+            display_target=disp_tgt,
+            workdir=ctx.workdir,
+            device=dev or _LAST_BROWSER_CONTEXT.get("device", "") or "desktop",
+            max_captures=cap_limit,
+            on_capture=on_capture,
+        )
+    return {"success": False, "error": f"Shots subagent requires a URL or workspace HTML file (got '{raw_url}')."}
+
+
+def tool_screenshot(
+    ctx: AgentContext,
+    target: str = "auto",
+    selector: str = "",
+    device: str = "",
+    full_page: bool = False,
+    click: str = "",
+    shots: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    import uuid
+    target = (target or "auto").strip()
+    low_t = target.lower()
+    sel_clean = (selector or "").strip()
+    dev_clean = (device or "").strip().lower()
+    clk_clean = (click or "").strip()
+
+    if shots and isinstance(shots, list):
+        return tool_shots(ctx, target=target, shots=shots, device=dev_clean, full_page=full_page)
+
+    # Mode 3c: List open Windows window titles so model never guesses or web-searches desktop apps
+    if low_t in ("list_windows", "windows", "window_list"):
+        titles = [w["title"] for w in _list_visible_windows()[:25]]
+        return {
+            "success": True,
+            "windows": titles,
+            "count": len(titles),
+            "note": "Pass one of these window titles as target to screenshot(target=...) to capture it.",
+        }
+
+    # Mode 3a: Explicit full desktop/screen capture -> pure OS screenshot
+    if low_t in ("screen", "desktop", "monitor", "fullscreen", "full_screen"):
+        rect = None
+    else:
+        # Check whether browser/web session or local HTML is available
+        live_eng = None
+        live_url = ""
+        try:
+            from ..browser import get_browser_engine
+            eng = get_browser_engine()
+            if getattr(eng, "running", False) and getattr(eng, "url", "") not in ("", "about:blank"):
+                live_eng = eng
+                live_url = str(eng.url)
+        except Exception:
+            pass
+
+        last_ctx_url = str(_LAST_BROWSER_CONTEXT.get("url") or "").strip()
+        if not last_ctx_url and live_eng is not None:
+            ls = getattr(live_eng, "last_session", None)
+            if isinstance(ls, dict) and ls.get("url"):
+                last_ctx_url = str(ls["url"]).strip()
+
+        def _capture_last_browser() -> Optional[Dict[str, Any]]:
+            # Live open BrowserEngine with no explicit viewport override -> capture exact current DOM state
+            if live_eng is not None and (not dev_clean or dev_clean == getattr(live_eng, "device", "")):
+                out_live = os.path.join(_screenshot_dir(), f"{uuid.uuid4().hex}.png")
+                return _capture_live_browser(
+                    out_live,
+                    live_eng,
+                    selector=sel_clean,
+                    full_page=full_page,
+                    click=clk_clean,
+                )
+            eff_url = live_url or last_ctx_url
+            if eff_url:
+                eff_dev = dev_clean or _LAST_BROWSER_CONTEXT.get("device", "")
+                eff_work = _LAST_BROWSER_CONTEXT.get("workdir") or ctx.workdir
+                raw_tgt = _LAST_BROWSER_CONTEXT.get("raw_target") or eff_url
+                # If a local static preview server died, re-resolve using saved raw_target when available
+                cand_target = eff_url
+                try:
+                    import urllib.parse
+                    parsed = urllib.parse.urlparse(eff_url)
+                    if (parsed.hostname or "").lower() in ("127.0.0.1", "localhost", "::1") and parsed.port:
+                        if not _is_local_port_open(int(parsed.port)) and raw_tgt:
+                            cand_target = raw_tgt
+                except Exception:
+                    pass
+                lbl = raw_tgt if str(raw_tgt).startswith("browser") else f"browser · {raw_tgt}"
+                return _capture_web_screenshot(
+                    eff_work,
+                    cand_target,
+                    selector=sel_clean,
+                    device=eff_dev,
+                    full_page=full_page,
+                    click=clk_clean,
+                    display_label=lbl,
+                )
+            ws_html = _find_workspace_html(ctx.workdir)
+            if ws_html:
+                return _capture_web_screenshot(
+                    ctx.workdir,
+                    ws_html,
+                    selector=sel_clean,
+                    device=dev_clean,
+                    full_page=full_page,
+                    click=clk_clean,
+                )
+            return None
+
+        # Mode 2a: Explicit browser capture
+        if low_t in ("browser", "last_browser", "current_page", "current_tab"):
+            web_res = _capture_last_browser()
+            if web_res is not None:
+                return web_res
+            return {
+                "success": False,
+                "error": "No recent browser session or workspace HTML file found. Pass target='https://...' or a local HTML file like 'index.html'.",
+            }
+
+        # Mode 1 / 2b: Explicit web URL or local HTML file (or explicit web-only params)
+        is_explicit_web = (
+            low_t.startswith(("http://", "https://", "file://"))
+            or low_t.endswith((".html", ".htm"))
+        )
+        if is_explicit_web:
+            return _capture_web_screenshot(
+                ctx.workdir,
+                target,
+                selector=sel_clean,
+                device=dev_clean,
+                full_page=full_page,
+                click=clk_clean,
+            )
+
+        # Smart auto resolution + safety guard when small models pass "active_window" for web apps
+        is_auto_or_guarded = (
+            low_t in ("auto", "app", "page", "site", "web", "current", "last", "")
+            or bool(sel_clean or dev_clean or full_page or clk_clean)
+            or (
+                low_t == "active_window"
+                and (live_eng is not None or bool(last_ctx_url) or bool(_find_workspace_html(ctx.workdir)))
+            )
+        )
+        if is_auto_or_guarded:
+            web_res = _capture_last_browser()
+            if web_res is not None:
+                return web_res
+            if bool(sel_clean or dev_clean or full_page or clk_clean) and low_t not in ("active_window",):
+                return _capture_web_screenshot(
+                    ctx.workdir,
+                    target,
+                    selector=sel_clean,
+                    device=dev_clean,
+                    full_page=full_page,
+                    click=clk_clean,
+                )
+
+        # Mode 3b: Explicit Windows OS window title or foreground active_window
+        rect = _find_window_rect("" if low_t in ("active_window", "auto", "") else target)
+        if low_t not in ("active_window", "auto", "") and rect is None:
+            wins = [w["title"] for w in _list_visible_windows()[:15]]
+            win_hint = f" Visible windows: {', '.join(wins)}." if wins else ""
+            return {
+                "success": False,
+                "error": (
+                    f"No visible OS window matching '{target}'.{win_hint} "
+                    "Use target='screen' for full desktop, target='browser' for the last browser page, "
+                    "or target='https://...' / 'index.html' for a web capture."
+                ),
+            }
+
     try:
         import mss
     except ImportError:
@@ -1238,7 +2173,11 @@ def tool_screenshot(ctx: AgentContext, target: str = "active_window") -> Dict[st
     try:
         out = os.path.join(_screenshot_dir(), f"{uuid.uuid4().hex}.png")
         with mss.mss() as sct:
-            monitor = {"left": rect["left"], "top": rect["top"], "width": rect["width"], "height": rect["height"]} if rect else sct.monitors[0]
+            monitor = (
+                {"left": rect["left"], "top": rect["top"], "width": rect["width"], "height": rect["height"]}
+                if rect
+                else sct.monitors[0]
+            )
             shot = sct.grab(monitor)
             try:
                 from PIL import Image
@@ -1258,13 +2197,16 @@ def tool_screenshot(ctx: AgentContext, target: str = "active_window") -> Dict[st
                 size = os.path.getsize(out)
             except ImportError:
                 pass
-        res = {"success": True, "path": out, "size_bytes": size, "target": target}
-        if "." in target and any(target.lower().endswith(ext) for ext in (".html", ".htm", ".py", ".js", ".ts", ".css", ".md", ".txt", ".json")):
-            res["note"] = (
-                f"Captured desktop because '{target}' is a file name, not an OS window title. "
-                "To screenshot a web page, open it in a browser window first and capture that window."
-            )
-        return res
+        img_w, img_h = _read_png_dimensions(out)
+        return {
+            "success": True,
+            "path": out,
+            "size_bytes": size,
+            "width": img_w,
+            "height": img_h,
+            "target": "screen" if low_t in ("screen", "desktop", "monitor", "fullscreen", "full_screen") else target,
+            "source": "os_window" if rect else "desktop",
+        }
     except Exception as e:
         return {"success": False, "error": f"screenshot failed: {e}"}
 

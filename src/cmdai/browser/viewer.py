@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import os
 import socket
 import socketserver
 import threading
@@ -48,6 +49,8 @@ _VIEWER_HTML = r"""<!DOCTYPE html>
     --accent-red: #dc2626;
     --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
     --shadow-stage: 0 10px 30px rgba(15, 23, 42, 0.08);
+    --checker-a: #f8fafc;
+    --checker-b: #f1f5f9;
     --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
     --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
     color-scheme: light;
@@ -70,6 +73,8 @@ _VIEWER_HTML = r"""<!DOCTYPE html>
     --accent-red: #f87171;
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
     --shadow-stage: 0 14px 40px rgba(0, 0, 0, 0.45);
+    --checker-a: #121217;
+    --checker-b: #16161d;
     color-scheme: dark;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -95,6 +100,12 @@ _VIEWER_HTML = r"""<!DOCTYPE html>
   .top-left { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
   .cc-vector-badge { width: 112px; height: 19px; display: inline-flex; align-items: center; flex-shrink: 0; }
   .cc-vector-badge svg { width: 100%; height: 100%; display: block; shape-rendering: geometricPrecision; }
+  .mode-tag {
+    display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
+    background: var(--accent-blue-soft); color: var(--accent-blue);
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    font-family: var(--font-mono); font-size: 10.5px; font-weight: 650; letter-spacing: 0.05em;
+  }
   .divider { width: 1px; height: 16px; background: var(--border-strong); }
   .status-pill {
     display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
@@ -199,6 +210,99 @@ _VIEWER_HTML = r"""<!DOCTYPE html>
   .tap.active::after { width: 68px; height: 68px; border: 1.2px solid rgba(255,255,255,0.45); animation: tb2 0.58s cubic-bezier(0.16,1,0.3,1) forwards; }
   @keyframes tb1 { 0% { opacity: 0.95; transform: translate(-50%,-50%) scale(0.22); } 100% { opacity: 0; transform: translate(-50%,-50%) scale(1.15); } }
   @keyframes tb2 { 0% { opacity: 0.7; transform: translate(-50%,-50%) scale(0.25); } 100% { opacity: 0; transform: translate(-50%,-50%) scale(1.25); } }
+  .shutter-flash {
+    position: absolute; inset: 0; pointer-events: none; z-index: 28; opacity: 0;
+    border-radius: inherit;
+    background: rgba(255, 255, 255, 0.48);
+  }
+  .shutter-flash.active { animation: shutterFlash 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+  @keyframes shutterFlash {
+    0% { opacity: 0.48; }
+    100% { opacity: 0; }
+  }
+  .shots-gallery {
+    width: 100%; max-width: 1040px; align-self: flex-start; margin: 0 auto;
+    display: none; flex-direction: column; gap: 14px; padding: 6px 2px 16px;
+  }
+  .shots-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+    background: var(--bg-card); border: 1px solid var(--border-hairline);
+    border-radius: 12px; padding: 12px 16px; box-shadow: var(--shadow-xs);
+  }
+  .shots-title { font-size: 14px; font-weight: 650; color: var(--text-primary); display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .shots-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px;
+  }
+  .shot-card {
+    background: var(--bg-card); border: 1px solid var(--border-hairline);
+    border-radius: 12px; overflow: hidden; box-shadow: var(--shadow-xs);
+    cursor: pointer; display: flex; flex-direction: column;
+    transition: border-color 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
+  }
+  .shot-card:hover { border-color: var(--accent-blue); transform: translateY(-1px); box-shadow: var(--shadow-stage); }
+  .shot-thumb {
+    width: 100%; aspect-ratio: 16 / 10; background: var(--bg-subtle);
+    overflow: hidden; border-bottom: 1px solid var(--border-hairline);
+    display: flex; align-items: center; justify-content: center; padding: 6px;
+  }
+  .shot-thumb img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; display: block; border-radius: 4px; }
+  .shot-meta { padding: 9px 11px; display: flex; flex-direction: column; gap: 3px; }
+  .shot-lbl { font-size: 12.6px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .shot-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+
+  .lightbox {
+    position: fixed; inset: 0; z-index: 60; display: none; padding: 8px;
+    background: var(--bg-app);
+  }
+  .lightbox.open { display: flex; }
+  .lb-shell {
+    flex: 1; min-height: 0; display: flex; flex-direction: column;
+    background: var(--bg-stage); border: 1px solid var(--border-hairline);
+    border-radius: 12px; overflow: hidden; box-shadow: var(--shadow-xs);
+  }
+  .lb-bar {
+    height: 46px; padding: 0 14px; background: var(--bg-topbar);
+    border-bottom: 1px solid var(--border-hairline);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0;
+  }
+  .lb-left { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .lb-center { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; }
+  .lb-pill {
+    display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+    height: 30px; padding: 0 12px; border-radius: 999px;
+    background: var(--bg-card); border: 1px solid var(--border-hairline);
+    box-shadow: var(--shadow-xs); min-width: 0;
+  }
+  .lb-tag {
+    font-family: var(--font-mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.04em; padding: 2px 7px; border-radius: 999px;
+    background: var(--accent-blue-soft); color: var(--accent-blue); flex-shrink: 0;
+  }
+  .lb-title { font-size: 12.2px; font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lb-dims { font-family: var(--font-mono); font-size: 11.2px; color: var(--text-muted); flex-shrink: 0; }
+  .lb-btns { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .lb-count { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); padding: 0 5px; user-select: none; }
+  .lb-stage {
+    flex: 1; min-height: 0; overflow: auto; display: flex; align-items: center; justify-content: center; padding: 20px;
+    background-image:
+      linear-gradient(45deg, var(--checker-b) 25%, transparent 25%),
+      linear-gradient(-45deg, var(--checker-b) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, var(--checker-b) 75%),
+      linear-gradient(-45deg, transparent 75%, var(--checker-b) 75%);
+    background-size: 20px 20px;
+    background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+    background-color: var(--checker-a);
+  }
+  .lb-stage.zoomed { align-items: flex-start; justify-content: flex-start; }
+  .lb-frame {
+    display: inline-flex; border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--border-hairline); box-shadow: var(--shadow-stage); background: var(--bg-card);
+  }
+  .lb-frame img {
+    display: block; max-width: calc(100vw - 64px); max-height: calc(100vh - 110px);
+    width: auto; height: auto; cursor: zoom-in; user-select: none;
+  }
+  .lb-stage.zoomed .lb-frame img { max-width: none; max-height: none; cursor: zoom-out; }
 
   .footer {
     height: 32px; padding: 0 14px; background: var(--bg-topbar);
@@ -214,6 +318,7 @@ _VIEWER_HTML = r"""<!DOCTYPE html>
     <header class="topbar">
       <div class="top-left">
         <span id="brand-logo" class="cc-vector-badge" aria-label="CMDAI CODE"></span>
+        <span id="mode-tag" class="mode-tag" style="display:none;">SHOTS</span>
       </div>
       <div class="omnibox-wrap">
         <button id="reload" class="top-btn" style="width:30px;height:30px;padding:0;justify-content:center;border-radius:999px;" type="button" title="Reload">
@@ -251,8 +356,19 @@ _VIEWER_HTML = r"""<!DOCTYPE html>
           <ol id="sum-steps"></ol>
         </details>
       </div>
+      <div id="shots-gallery" class="shots-gallery">
+        <div class="shots-head">
+          <div class="shots-title">
+            <img id="sg-fav" class="omnibox-fav" alt="" />
+            <span id="sg-title">Captured Screenshots</span>
+          </div>
+          <div id="sg-pills" class="summary-pills"></div>
+        </div>
+        <div id="sg-grid" class="shots-grid"></div>
+      </div>
       <div id="stage" class="stage" style="display:none;">
         <img id="img" alt="Live Browser" draggable="false" />
+        <div id="shutter" class="shutter-flash"></div>
         <div id="tap" class="tap"></div>
         <div id="cur" class="cursor">
           <svg width="22" height="22" viewBox="0 0 24 24"><path d="M 2,3.0 C 2,1.1 4.1,0.3 5.5,1.5 L 18.0,12.2 C 19.6,13.6 18.8,16.2 16.7,16.4 L 11.8,16.7 C 10.1,16.8 8.6,17.5 7.4,18.7 L 5.0,21.0 C 3.6,22.3 2,21.3 2,19.4 Z" fill="#09090b" stroke="#ffffff" stroke-width="2.0" stroke-linejoin="round" stroke-linecap="round"/></svg>
@@ -264,6 +380,34 @@ _VIEWER_HTML = r"""<!DOCTYPE html>
       <span>Headless CDP · Your physical mouse is untouched</span>
       <span id="cerr">0 console errors</span>
     </footer>
+  </div>
+  <div id="lightbox" class="lightbox" aria-hidden="true">
+    <div class="lb-shell">
+      <div class="lb-bar">
+        <div class="lb-left">
+          <button id="lb-close" class="top-btn" type="button">← Gallery</button>
+        </div>
+        <div class="lb-center">
+          <div class="lb-pill">
+            <span class="lb-tag">SCREENSHOT</span>
+            <span id="lb-title" class="lb-title">Screenshot</span>
+            <span id="lb-dims" class="lb-dims"></span>
+          </div>
+        </div>
+        <div class="lb-btns">
+          <button id="lb-prev" class="top-btn" type="button" title="Previous (Left arrow)">←</button>
+          <span id="lb-count" class="lb-count">1 / 1</span>
+          <button id="lb-next" class="top-btn" type="button" title="Next (Right arrow)">→</button>
+          <button id="lb-zoom" class="top-btn" type="button">100%</button>
+          <a id="lb-dl" class="top-btn" href="#" download="screenshot.png" style="text-decoration:none;">Download</a>
+        </div>
+      </div>
+      <div id="lb-stage" class="lb-stage">
+        <div class="lb-frame">
+          <img id="lb-img" src="" alt="Screenshot" draggable="false" />
+        </div>
+      </div>
+    </div>
   </div>
 <script>
   // Exact CMDAI CODE vector block logo
@@ -328,14 +472,53 @@ _VIEWER_HTML = r"""<!DOCTYPE html>
     applyTheme(next);
   };
 
-  let lastFrame = -1, lastClick = 0, bw = 1280, bh = 800, takeCtrl = false, lastCur = {x:640,y:400}, lastFav = "", lastSumKey = "";
+  let lastFrame = -1, lastClick = 0, lastCapSeq = -1, capWhisperUntil = 0, capWhisperText = "", bw = 1280, bh = 800, takeCtrl = false, lastCur = {x:640,y:400}, lastFav = "", lastSumKey = "";
   const img = document.getElementById('img'), cur = document.getElementById('cur'), tap = document.getElementById('tap');
   const wh = document.getElementById('wh'), wht = document.getElementById('wht'), stage = document.getElementById('stage');
+  const modeTag = document.getElementById('mode-tag'), shutterEl = document.getElementById('shutter');
   const empty = document.getElementById('empty'), urlInp = document.getElementById('url'), pill = document.getElementById('pill'), pillLbl = document.getElementById('pill-lbl');
   const takeBtn = document.getElementById('take'), cerr = document.getElementById('cerr');
   const favEl = document.getElementById('fav'), globeEl = document.getElementById('globe');
   const sumCard = document.getElementById('summary'), sumTitle = document.getElementById('sum-title'), sumPills = document.getElementById('sum-pills');
   const sumBody = document.getElementById('sum-body'), sumSteps = document.getElementById('sum-steps'), sumStepsLbl = document.getElementById('sum-steps-lbl'), sumReopen = document.getElementById('sum-reopen'), sumFav = document.getElementById('sum-fav');
+  const sgWrap = document.getElementById('shots-gallery'), sgTitle = document.getElementById('sg-title'), sgPills = document.getElementById('sg-pills'), sgGrid = document.getElementById('sg-grid'), sgFav = document.getElementById('sg-fav');
+  const lb = document.getElementById('lightbox'), lbStage = document.getElementById('lb-stage'), lbImg = document.getElementById('lb-img'), lbTitle = document.getElementById('lb-title'), lbDims = document.getElementById('lb-dims'), lbCount = document.getElementById('lb-count'), lbDl = document.getElementById('lb-dl'), lbZoom = document.getElementById('lb-zoom');
+  let lastShotsKey = "", currentCaptures = [], lbIndex = 0;
+
+  function openLightbox(idx) {
+    if (!currentCaptures.length) return;
+    lbIndex = ((idx % currentCaptures.length) + currentCaptures.length) % currentCaptures.length;
+    const cap = currentCaptures[lbIndex];
+    const src = `/api/shot/${lbIndex}?v=${encodeURIComponent(lastShotsKey)}`;
+    lbImg.src = src;
+    lbDl.href = src;
+    const slug = (cap.label || 'screenshot').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'screenshot';
+    lbDl.download = `${slug}.png`;
+    const meta = [cap.device, (cap.width && cap.height) ? `${cap.width}×${cap.height}` : '', cap.size_bytes ? `${Math.max(1, Math.round(cap.size_bytes / 1024))} KB` : ''].filter(Boolean).join(' · ');
+    lbTitle.textContent = cap.label || 'Screenshot';
+    if (lbDims) lbDims.textContent = meta;
+    lbCount.textContent = `${lbIndex + 1} / ${currentCaptures.length}`;
+    lbStage.classList.remove('zoomed');
+    lbZoom.textContent = '100%';
+    lb.classList.add('open');
+  }
+  function closeLightbox() { lb.classList.remove('open'); }
+  document.getElementById('lb-close').onclick = closeLightbox;
+  document.getElementById('lb-prev').onclick = () => openLightbox(lbIndex - 1);
+  document.getElementById('lb-next').onclick = () => openLightbox(lbIndex + 1);
+  function toggleLbZoom() {
+    const z = lbStage.classList.toggle('zoomed');
+    lbZoom.textContent = z ? 'Fit' : '100%';
+  }
+  lbImg.onclick = toggleLbZoom;
+  lbZoom.onclick = toggleLbZoom;
+  lb.onclick = (e) => { if (e.target === lb || e.target === lbStage) closeLightbox(); };
+  document.addEventListener('keydown', (e) => {
+    if (!lb.classList.contains('open')) return;
+    if (e.key === 'Escape') closeLightbox();
+    else if (e.key === 'ArrowLeft') openLightbox(lbIndex - 1);
+    else if (e.key === 'ArrowRight') openLightbox(lbIndex + 1);
+  });
 
   function setFavicon(src) {
     if (src === lastFav) return;
@@ -365,6 +548,9 @@ _VIEWER_HTML = r"""<!DOCTYPE html>
       const r = await fetch('/api/state');
       if (!r.ok) return;
       const st = await r.json();
+      const isShotsMode = st.mode === 'shots';
+      if (modeTag) modeTag.style.display = isShotsMode ? 'inline-flex' : 'none';
+      document.title = isShotsMode ? 'CMDAI CODE · Live Shots' : 'CMDAI CODE · Live Browser';
       bw = st.width || 1280; bh = st.height || 800; takeCtrl = !!st.take_control;
       const dev = st.device || (bw < bh ? (bw <= 480 ? 'mobile' : 'tablet') : 'desktop');
       stage.style.aspectRatio = `${bw} / ${bh}`;
@@ -373,10 +559,57 @@ _VIEWER_HTML = r"""<!DOCTYPE html>
       if (st.url && document.activeElement !== urlInp) urlInp.value = st.url;
       setFavicon(st.favicon || (st.last_session && st.last_session.favicon) || "");
       const run = !!(st.running && st.has_frame);
-      const hasSum = !run && st.last_session && st.last_session.summary;
-      empty.style.display = (!run && !hasSum) ? 'block' : 'none';
+      const isShotsDone = !run && st.last_session && st.last_session.mode === 'shots' && Array.isArray(st.last_session.captures) && st.last_session.captures.length > 0;
+      const hasSum = !run && !isShotsDone && st.last_session && st.last_session.summary;
+      if (run) { closeLightbox(); lastShotsKey = ""; }
+      empty.style.display = (!run && !hasSum && !isShotsDone) ? 'block' : 'none';
       sumCard.style.display = hasSum ? 'flex' : 'none';
+      sgWrap.style.display = isShotsDone ? 'flex' : 'none';
       stage.style.display = run ? 'block' : 'none';
+      if (isShotsDone) {
+        const s = st.last_session;
+        const sk = `${s.url}|${s.elapsed}|${s.count}`;
+        if (sk !== lastShotsKey) {
+          lastShotsKey = sk;
+          currentCaptures = s.captures;
+          sgTitle.textContent = s.title || s.url || 'Captured Screenshots';
+          if (s.favicon) {
+            sgFav.onload = () => { sgFav.style.display = 'block'; };
+            sgFav.onerror = () => { sgFav.style.display = 'none'; };
+            sgFav.src = s.favicon;
+          } else { sgFav.style.display = 'none'; }
+          sgPills.innerHTML = '';
+          [s.model, `${s.count} capture${s.count === 1 ? '' : 's'}`, (s.elapsed !== undefined ? `${s.elapsed}s` : '')].filter(Boolean).forEach((t) => {
+            const sp = document.createElement('span'); sp.className = 'summary-pill'; sp.textContent = t; sgPills.appendChild(sp);
+          });
+          sgGrid.innerHTML = '';
+          s.captures.forEach((c, idx) => {
+            const card = document.createElement('div');
+            card.className = 'shot-card';
+            card.onclick = () => openLightbox(idx);
+            const th = document.createElement('div');
+            th.className = 'shot-thumb';
+            const thImg = document.createElement('img');
+            thImg.src = `/api/shot/${idx}?v=${encodeURIComponent(sk)}`;
+            thImg.alt = c.label || `Capture ${idx + 1}`;
+            thImg.loading = 'lazy';
+            th.appendChild(thImg);
+            const mt = document.createElement('div');
+            mt.className = 'shot-meta';
+            const lbEl = document.createElement('div');
+            lbEl.className = 'shot-lbl';
+            lbEl.textContent = c.label || `Capture ${idx + 1}`;
+            const subEl = document.createElement('div');
+            subEl.className = 'shot-sub';
+            subEl.textContent = [c.device, (c.width && c.height) ? `${c.width}×${c.height}` : '', c.size_bytes ? `${Math.max(1, Math.round(c.size_bytes / 1024))} KB` : ''].filter(Boolean).join(' · ');
+            mt.appendChild(lbEl);
+            mt.appendChild(subEl);
+            card.appendChild(th);
+            card.appendChild(mt);
+            sgGrid.appendChild(card);
+          });
+        }
+      }
       if (hasSum) {
         const s = st.last_session;
         const skey = `${s.url}|${s.elapsed}|${s.steps_count}`;
@@ -414,12 +647,27 @@ _VIEWER_HTML = r"""<!DOCTYPE html>
         lastFrame = st.frame_seq;
         img.src = `/api/frame?seq=${lastFrame}&t=${Date.now()}`;
       }
+      if (typeof st.capture_seq === 'number') {
+        if (lastCapSeq < 0) {
+          lastCapSeq = st.capture_seq;
+        } else if (st.capture_seq > lastCapSeq) {
+          lastCapSeq = st.capture_seq;
+          if (shutterEl) {
+            shutterEl.classList.remove('active');
+            void shutterEl.offsetWidth;
+            shutterEl.classList.add('active');
+          }
+          capWhisperText = `Saved · ${st.capture_label || 'Screenshot'}`;
+          capWhisperUntil = Date.now() + 1200;
+        }
+      }
       if (run && st.cursor) {
         lastCur = st.cursor;
         posCur();
-        const showWh = !!(lastCur.label && lastCur.state !== 'idle' && !takeCtrl);
+        const activeCapWh = (Date.now() < capWhisperUntil) && !takeCtrl;
+        const showWh = activeCapWh || !!(lastCur.label && lastCur.state !== 'idle' && !takeCtrl);
         wh.classList.toggle('hidden', !showWh);
-        if (showWh) wht.textContent = lastCur.label;
+        if (showWh) wht.textContent = activeCapWh ? capWhisperText : lastCur.label;
         if ((lastCur.click_seq || 0) > lastClick) {
           lastClick = lastCur.click_seq;
           cur.classList.add('pressing'); setTimeout(() => cur.classList.remove('pressing'), 180);
@@ -524,6 +772,36 @@ class _ViewerHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(frame)
+        elif path.startswith("/api/shot/"):
+            raw_idx = path[len("/api/shot/"):].strip("/")
+            ls = getattr(eng, "last_session", None)
+            caps = ls.get("captures") if isinstance(ls, dict) and ls.get("mode") == "shots" else None
+            try:
+                idx = int(raw_idx)
+            except (TypeError, ValueError):
+                idx = -1
+            if not isinstance(caps, list) or idx < 0 or idx >= len(caps):
+                self.send_response(404)
+                self.end_headers()
+                return
+            shot_path = str((caps[idx] or {}).get("path") or "").strip()
+            if not shot_path or not os.path.isfile(shot_path):
+                self.send_response(404)
+                self.end_headers()
+                return
+            try:
+                with open(shot_path, "rb") as f:
+                    data = f.read()
+            except OSError:
+                self.send_response(500)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
         else:
             self.send_response(404)
             self.end_headers()
@@ -561,10 +839,11 @@ def ensure_viewer_server() -> str:
         return f"http://127.0.0.1:{_VIEWER_PORT}/"
 
 
-def open_live_browser_viewer() -> str:
+def open_live_browser_viewer(open_browser: bool = True) -> str:
     url = ensure_viewer_server()
-    try:
-        webbrowser.open(url)
-    except Exception:
-        pass
+    if open_browser:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
     return url

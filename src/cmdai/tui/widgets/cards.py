@@ -1136,10 +1136,21 @@ class AssistantTurnCard(Vertical):
                     b.append_summary_chunk(chunk)
                 break
 
+    def add_shot_capture(self, cap: Dict[str, Any]) -> None:
+        blocks = list(self.flow_container.query(ToolBlock)) or self.tool_blocks
+        for b in reversed(blocks):
+            if getattr(b, "tool_running", False) and (getattr(b, "tool_name", "") or "").lower() in ("shots", "screenshot"):
+                b.add_live_capture(cap)
+                break
+
     def finish_tool(self, result: Dict[str, Any]) -> None:
         self.clear_generating_tool()
         blocks = list(self.flow_container.query(ToolBlock)) or self.tool_blocks
-        want_sum = isinstance(result, dict) and "summary" in result
+        want_sum = (
+            isinstance(result, dict)
+            and "summary" in result
+            and not any(k in result for k in ("captures", "steps", "steps_count", "path", "url"))
+        )
         for b in reversed(blocks):
             if getattr(b, "tool_running", False) and not getattr(b, "is_backgrounded", False):
                 if want_sum and (getattr(b, "tool_name", "") or "").lower() not in ("summarizing", "summarize", "compact", "context_compact"):
@@ -1671,6 +1682,53 @@ class ThinkingBlock(Vertical):
         self.set_expanded(not self.is_expanded)
 
 
+class _ScreenshotTreeRow(Static):
+    """Single clickable screenshot row rendered under a multi-capture Screenshot card."""
+
+    DEFAULT_CSS = """
+    _ScreenshotTreeRow {
+        width: 100%;
+        height: 1;
+        padding: 0;
+        text-wrap: nowrap;
+        overflow-x: hidden;
+    }
+    """
+
+    def __init__(
+        self,
+        shot_path: str,
+        shot_title: str,
+        display_text: Text,
+        gallery: List[Dict[str, Any]],
+        index: int,
+    ):
+        super().__init__(display_text)
+        self.shot_path = shot_path
+        self.shot_title = shot_title
+        self.gallery = gallery
+        self.index = index
+
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        event.prevent_default()
+        if not self.shot_path or not os.path.isfile(self.shot_path):
+            return
+        try:
+            from ...core.screenshot_viewer import open_screenshot_in_web
+            url = open_screenshot_in_web(
+                self.shot_path,
+                title=self.shot_title,
+                gallery=self.gallery,
+                index=self.index,
+            )
+            app = getattr(self, "app", None)
+            if app and hasattr(app, "notify"):
+                app.notify(f"Opened Screenshot: {url}", title="Screenshot", timeout=2.5)
+        except Exception:
+            pass
+
+
 class ToolBlock(Vertical):
     """Collapsible tool block rendered as 1 single gray line with ● vs ○ and animated spinner when running."""
 
@@ -1679,6 +1737,11 @@ class ToolBlock(Vertical):
         width: 100%;
         height: auto;
         margin: 0 0 1 0;
+    }
+    ToolBlock .screenshot-tree {
+        width: 100%;
+        height: auto;
+        display: none;
     }
     ToolBlock .tool-details {
         width: 100%;
@@ -1709,7 +1772,7 @@ class ToolBlock(Vertical):
             tl = tl[5:].strip()
         tl_clean = tl.replace("-", "").replace("_", "").replace(" ", "")
         if tl in self.NON_EXPANDABLE_TOOLS or tl_clean in (
-            "web", "webfetch", "fetch", "searchweb", "websearch", "read", "scratch", "glob", "search", "grep", "googlesearch", "bravesearch"
+            "web", "webfetch", "fetch", "searchweb", "websearch", "read", "scratch", "glob", "search", "grep", "googlesearch", "bravesearch", "screenshot", "shots", "browser"
         ):
             return False
         return True
@@ -1808,7 +1871,10 @@ class ToolBlock(Vertical):
         self.subagent_events: List[Dict[str, Any]] = []
 
         self.summary_live_text: str = ""
+        self.screenshot_captures: List[Dict[str, Any]] = []
+        self._shots_tree_retry_scheduled: bool = False
         self.header_widget = Static("", classes="tool-header")
+        self.shots_tree = Vertical(classes="screenshot-tree")
         is_sum_init = self.tool_name.lower() in ("summarizing", "summarize", "compact", "context_compact")
         self.details_widget = Static("", classes="thinking-body" if is_sum_init else "tool-details")
         self.details_widget.styles.display = "none"
@@ -1826,11 +1892,79 @@ class ToolBlock(Vertical):
 
     def compose(self):
         yield self.header_widget
+        yield self.shots_tree
         yield self.details_widget
         yield self.bg_hint_widget
 
+    def _render_screenshot_tree(self, force_single: bool = False) -> None:
+        min_rows = 1 if (force_single or (self.tool_name or "").lower().strip() == "shots") else 2
+        if len(self.screenshot_captures) < min_rows:
+            return
+        if not self.is_mounted or not getattr(self.shots_tree, "is_mounted", False):
+            if self.is_mounted and not getattr(self, "_shots_tree_retry_scheduled", False):
+                self._shots_tree_retry_scheduled = True
+                self.call_after_refresh(self._render_screenshot_tree, force_single=force_single)
+            return
+        self._shots_tree_retry_scheduled = False
+        try:
+            self.shots_tree.remove_children()
+            total = len(self.screenshot_captures)
+            for idx, cap in enumerate(self.screenshot_captures):
+                branch = "  └─ " if idx == total - 1 else "  ├─ "
+                lbl = str(cap.get("label") or cap.get("target") or "capture").strip()
+                meta_parts = []
+                dev_s = str(cap.get("device") or "").strip()
+                if dev_s:
+                    meta_parts.append(dev_s)
+                w = int(cap.get("width", 0) or 0)
+                h = int(cap.get("height", 0) or 0)
+                if w > 0 and h > 0:
+                    meta_parts.append(f"{w}×{h}")
+                sz = int(cap.get("size_bytes", 0) or 0)
+                if sz > 0:
+                    meta_parts.append(f"{max(1, sz // 1024)} KB")
+                shot_path = str(cap.get("path") or "")
+                if shot_path and not os.path.isfile(shot_path):
+                    meta_parts.append("missing")
+                row_txt = Text(no_wrap=True)
+                row_txt.append(branch, style="dim #6e7681")
+                row_txt.append(lbl, style="#8b949e")
+                if meta_parts:
+                    row_txt.append(f" ({' · '.join(meta_parts)})", style="dim #6e7681")
+                row = _ScreenshotTreeRow(
+                    shot_path=shot_path,
+                    shot_title=lbl,
+                    display_text=row_txt,
+                    gallery=self.screenshot_captures,
+                    index=idx,
+                )
+                self.shots_tree.mount(row)
+            self.shots_tree.styles.display = "block"
+        except Exception:
+            pass
+
+    def add_live_capture(self, cap: Dict[str, Any]) -> None:
+        """Append a captured shot immediately into the tree while Shots is still running."""
+        if not isinstance(cap, dict) or not cap.get("path"):
+            return
+        self.screenshot_captures.append(cap)
+        if not getattr(self, "screenshot_path", ""):
+            self.screenshot_path = str(cap["path"])
+        raw_t = str(getattr(self, "target", "") or cap.get("target") or "shots").split(" (")[0].strip()
+        if len(raw_t) > 38:
+            raw_t = raw_t[:37] + "…"
+        cnt = len(self.screenshot_captures)
+        self.target = f"{raw_t} ({cnt} capture{'s' if cnt != 1 else ''})"
+        self.update_header()
+        self._render_screenshot_tree(force_single=True)
+
     def on_mount(self) -> None:
         self.update_header()
+        if self.screenshot_captures:
+            self.call_after_refresh(
+                self._render_screenshot_tree,
+                force_single=((self.tool_name or "").lower().strip() == "shots"),
+            )
         if self._original_details is not None:
             try:
                 self.details_widget.update(self._original_details)
@@ -1995,6 +2129,18 @@ class ToolBlock(Vertical):
         if (self.tool_name or "").lower().strip() == "browser":
             t_clean = str(target or "").strip()
             target = f"{t_clean}  · click to open" if t_clean else "click to open"
+        elif (self.tool_name or "").lower().strip() == "shots" and self.tool_running:
+            t_clean = str(target or "").strip()
+            target = f"{t_clean}  · click to open" if t_clean else "click to open"
+        elif (self.tool_name or "").lower().strip() in ("screenshot", "shots") and not self.tool_running:
+            has_shot = bool(
+                getattr(self, "screenshot_path", "")
+                or getattr(self, "screenshot_captures", None)
+                or (isinstance(getattr(self, "result_data", None), dict) and self.result_data.get("path"))
+            )
+            if has_shot:
+                t_clean = str(target or "").strip()
+                target = f"{t_clean}  · click to open" if t_clean else "click to open"
         text = render_tool_header(
             self.tool_name,
             target,
@@ -2200,6 +2346,10 @@ class ToolBlock(Vertical):
     def finish(self, result: Dict[str, Any]) -> None:
         self.tool_running = False
         self._stop_spinner()
+        if isinstance(result, dict):
+            self.result_data = result
+            if (self.tool_name or "").lower().strip() in ("screenshot", "shots") and result.get("path"):
+                self.screenshot_path = str(result.get("path"))
         if hasattr(self, "bg_hint_widget"):
             self.bg_hint_widget.styles.display = "none"
         elapsed = time.time() - self.start_time
@@ -2407,14 +2557,39 @@ class ToolBlock(Vertical):
             else:
                 txt.append(f"  No symbols found for query: {self.target}\n", style="dim #8b949e")
             self._safe_update_details(txt)
-        elif self.tool_name == "screenshot":
+        elif self.tool_name in ("screenshot", "shots"):
             txt = Text(no_wrap=True)
-            if result.get("path"):
-                if "(" not in self.target:
-                    self.target = f"{self.target} ({(result.get('size_bytes', 0) // 1024)} KB)"
-                    self.update_header()
+            captures = [c for c in (result.get("captures") or []) if isinstance(c, dict) and c.get("path")]
+            show_tree = (len(captures) >= 2) or (self.tool_name == "shots" and len(captures) >= 1)
+            if show_tree:
+                self.screenshot_captures = captures
+                base_lbl = str(result.get("target") or self.target or self.tool_name).split(" (")[0].strip()
+                if len(base_lbl) > 38:
+                    base_lbl = base_lbl[:37] + "…"
+                cnt = len(captures)
+                self.target = f"{base_lbl} ({cnt} capture{'s' if cnt != 1 else ''})"
+                self.update_header()
+                self._render_screenshot_tree(force_single=(self.tool_name == "shots"))
+                txt.append(f"  {cnt} capture{'s' if cnt != 1 else ''} saved (click any row or header to open)\n", style="dim #8b949e")
+            elif result.get("path"):
+                self.screenshot_captures = []
+                base_lbl = str(result.get("target") or self.target or "screenshot").strip()
+                if len(base_lbl) > 38:
+                    base_lbl = base_lbl[:37] + "…"
+                sel_lbl = str(result.get("selector") or "").strip()
+                if sel_lbl and sel_lbl not in base_lbl:
+                    base_lbl = f"{base_lbl} · {sel_lbl}"
+                meta_parts = []
+                dev_lbl = str(result.get("device") or "").strip()
+                if dev_lbl:
+                    meta_parts.append(dev_lbl)
+                if result.get("full_page"):
+                    meta_parts.append("full")
+                meta_parts.append(f"{max(1, int(result.get('size_bytes', 0) or 0) // 1024)} KB")
+                self.target = f"{base_lbl} ({' · '.join(meta_parts)})"
+                self.update_header()
                 txt.append(f"  {result['path']}\n", style="#e6edf3")
-                txt.append("  (open the file to view; call <tool:vision> to analyze it)\n", style="dim #8b949e")
+                txt.append("  (click card header to open in Web Screenshot Viewer)\n", style="dim #8b949e")
             else:
                 txt.append(f"  Screenshot failed: {result.get('error', 'unknown')}\n", style="#f85149")
             self._safe_update_details(txt)
@@ -2704,6 +2879,40 @@ class ToolBlock(Vertical):
                 pass
             return
 
+        if tl in ("screenshot", "shots"):
+            event.stop()
+            event.prevent_default()
+            if tl == "shots" and self.tool_running:
+                try:
+                    from ...browser import open_live_browser_viewer
+                    url = open_live_browser_viewer()
+                    app = getattr(self, "app", None)
+                    if app and hasattr(app, "notify"):
+                        app.notify(f"Opened Live Shots Viewer: {url}", title="Shots", timeout=2.5)
+                except Exception:
+                    pass
+                return
+            shot_p = getattr(self, "screenshot_path", "") or (
+                self.result_data.get("path", "") if isinstance(getattr(self, "result_data", None), dict) else ""
+            )
+            if shot_p and os.path.isfile(shot_p):
+                try:
+                    from ...core.screenshot_viewer import open_screenshot_in_web
+                    gal = list(getattr(self, "screenshot_captures", []) or [])
+                    url = open_screenshot_in_web(
+                        shot_p,
+                        title=str(gal[0].get("label") if gal else (self.target or "")),
+                        gallery=gal or None,
+                        index=0,
+                    )
+                    app = getattr(self, "app", None)
+                    if app and hasattr(app, "notify"):
+                        toast_t = "Shots" if tl == "shots" else "Screenshot"
+                        app.notify(f"Opened Screenshot: {url}", title=toast_t, timeout=2.5)
+                except Exception:
+                    pass
+            return
+
         # Clicking the background shortcut hint sends non-subagent tasks to background
         if getattr(event, "widget", None) == getattr(self, "bg_hint_widget", None):
             app = getattr(self, "app", None)
@@ -2715,18 +2924,6 @@ class ToolBlock(Vertical):
         if tl in ("summarizing", "summarize", "compact", "context_compact") or self.tool_running:
             self.set_expanded(not self.is_expanded)
             return
-        if self.tool_name == "screenshot" and self.result_data and self.result_data.get("path"):
-            import os as _os
-            import subprocess as _sp
-            p = self.result_data["path"]
-            try:
-                if _os.name == "nt":
-                    _os.startfile(p)
-                else:
-                    _sp.Popen(["xdg-open", p])
-                return
-            except Exception:
-                pass
         w = getattr(event, "widget", None)
         if w is not None:
             if w == self.details_widget:

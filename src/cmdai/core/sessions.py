@@ -832,6 +832,13 @@ AUTONOMOUS_NUDGE_PREFIXES = (
     "Nie zatrzymuj się na samej zapowiedzi",
     "Wywołaj teraz subagenta",
     "oraz przedstawić zwięzłe podsumowanie",
+    "Poprzednie wywołanie narzędzia zakończyło się błędem",
+    "Narzędzia zostały już wykonane.",
+    "Zakończyłeś fazę myślenia",
+    "[image question]",
+    "[vision:",
+    "[SYSTEM",
+    "[System",
 )
 
 def is_user_prompt_message(m: Dict[str, Any]) -> bool:
@@ -839,7 +846,7 @@ def is_user_prompt_message(m: Dict[str, Any]) -> bool:
         return False
     if m.get("internal") or m.get("autonomous_nudge"):
         return False
-    c = str(m.get("content", "") or "")
+    c = str(m.get("content", "") or "").lstrip()
     if any(c.startswith(prefix) for prefix in AUTONOMOUS_NUDGE_PREFIXES):
         return False
     return not bool(_TOOL_RESPONSE_RE.match(c))

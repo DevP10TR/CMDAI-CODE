@@ -815,15 +815,14 @@ class SessionsMixin:
     def _delete_turn(self, turn_id: int, keep_user: bool = True, notify: bool = True) -> None:
         try:
             # 1. Truncate self.messages from this turn onwards (keep user prompt if keep_user=True)
-            idx = next((i for i, m in enumerate(self.messages) if m.get("role") == "user" and int(m.get("turn_id") or -1) == int(turn_id)), None)
+            from ...core.sessions import is_user_prompt_message
+            idx = next((i for i, m in enumerate(self.messages) if is_user_prompt_message(m) and int(m.get("turn_id") or -1) == int(turn_id)), None)
             if idx is None:
                 # Fallback for reloaded sessions whose JSON messages do not store turn_id:
-                # locate the N-th real user message (1-based) so revert always clears old turns!
+                # locate the N-th real user prompt (excluding internal tool/error nudges!)
                 real_u_indices = [
                     i for i, m in enumerate(self.messages)
-                    if m.get("role") == "user"
-                    and not str(m.get("content", "")).lstrip().startswith("<tool_response")
-                    and not str(m.get("content", "")).lstrip().startswith("[image question]")
+                    if is_user_prompt_message(m)
                 ]
                 pos = max(0, int(turn_id) - 1)
                 if pos < len(real_u_indices):
@@ -837,12 +836,20 @@ class SessionsMixin:
                 self.messages.clear()
             else:
                 if keep_user:
-                    self.messages = [m for m in self.messages if int(m.get("turn_id") or 0) <= int(turn_id) and m.get("role") == "user"]
+                    self.messages = [m for m in self.messages if int(m.get("turn_id") or 0) <= int(turn_id) and is_user_prompt_message(m)]
                 else:
                     self.messages = [m for m in self.messages if int(m.get("turn_id") or 0) < int(turn_id)]
 
             # 2. Truncate self._transcript from this turn onwards
             t_idx = next((i for i, t in enumerate(self._transcript) if isinstance(t, dict) and t.get("kind") == "user" and int(t.get("turn_id") or -1) == int(turn_id)), None)
+            if t_idx is None:
+                t_u_indices = [
+                    i for i, t in enumerate(self._transcript)
+                    if isinstance(t, dict) and t.get("kind") == "user"
+                ]
+                t_pos = max(0, int(turn_id) - 1)
+                if t_pos < len(t_u_indices):
+                    t_idx = t_u_indices[t_pos]
             if t_idx is not None:
                 if keep_user:
                     del self._transcript[t_idx + 1:]
@@ -873,18 +880,25 @@ class SessionsMixin:
                     if keep_user and isinstance(child, UserMessageCard):
                         continue
                     try:
+                        child._pruning = True
                         child.remove()
                     except Exception:
                         pass
                 elif c_turn > int(turn_id):
                     try:
+                        child._pruning = True
                         child.remove()
                     except Exception:
                         pass
 
-            # Update turn counter
+            # Update turn counter and immediately rebuild TimelineRail dots
             self._turn_counter = int(turn_id) if keep_user else max(0, int(turn_id) - 1)
             self._current_assistant_card = None
+            try:
+                self._refresh_timeline_rail()
+                self.call_after_refresh(self._refresh_timeline_rail)
+            except Exception:
+                pass
             if notify:
                 if keep_user:
                     self.notify(f"Reverted model response for turn {turn_id}.", timeout=2.0)

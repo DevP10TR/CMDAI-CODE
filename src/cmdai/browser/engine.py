@@ -123,6 +123,10 @@ class BrowserEngine:
         self.console_logs: List[Dict[str, Any]] = []
         self.latest_frame: bytes = b""
         self.frame_seq: int = 0
+        self.viewer_mode: str = "browser"
+        self.capture_seq: int = 0
+        self.capture_label: str = ""
+        self._ephemeral_shots: List[str] = []
         self.cursor: Dict[str, Any] = {
             "x": width // 2,
             "y": height // 2,
@@ -178,10 +182,19 @@ class BrowserEngine:
             "cursor": dict(self.cursor),
             "frame_seq": self.frame_seq,
             "has_frame": bool(self.latest_frame),
+            "mode": self.viewer_mode,
+            "capture_seq": self.capture_seq,
+            "capture_label": self.capture_label,
             "console_count": len(self.console_logs),
             "console_errors": err_count,
             "console_logs": self.console_logs[-25:],
         }
+
+    def emit_capture_flash(self, label: str = "") -> None:
+        """Trigger a shutter-flash animation & toast notification in the Live Viewer."""
+        self.capture_seq += 1
+        self.capture_label = str(label or "").strip()[:48]
+        self._emit_state("capture")
 
     def set_cursor(self, x: Optional[int] = None, y: Optional[int] = None, state: str = "thinking", label: str = "", clicked: bool = False) -> None:
         if x is not None:
@@ -608,6 +621,12 @@ class BrowserEngine:
             self.set_cursor(state="idle", label="")
             return {"success": False, "error": str(exc)}
 
+    def register_ephemeral_shot(self, path: str) -> None:
+        """Track a temporary browser working screenshot to be deleted when the engine closes."""
+        p = str(path or "").strip()
+        if p and p not in self._ephemeral_shots:
+            self._ephemeral_shots.append(p)
+
     def screenshot(self, save_dir: str = "") -> Dict[str, Any]:
         ok, err = self.ensure_started()
         if not ok:
@@ -619,6 +638,7 @@ class BrowserEngine:
             path = os.path.join(out_dir, f"browser_{int(time.time() * 1000)}.jpg")
             with open(path, "wb") as f:
                 f.write(frame)
+            self.register_ephemeral_shot(path)
             self._emit_state("frame")
             return {"success": True, "path": path, "bytes": len(frame), "url": self.url}
         except Exception as exc:
@@ -685,6 +705,7 @@ class BrowserEngine:
         self.running = False
         self.take_control = False
         self.stopped_by_user = True
+        self.viewer_mode = "browser"
         try:
             if self._ws is not None:
                 self._run_coro(self._ws.close(), timeout=2.0)
@@ -706,6 +727,13 @@ class BrowserEngine:
             self._profile_dir = None
         self.latest_frame = b""
         self.elements = []
+        for shot_p in list(self._ephemeral_shots):
+            try:
+                if shot_p and os.path.isfile(shot_p):
+                    os.remove(shot_p)
+            except OSError:
+                pass
+        self._ephemeral_shots.clear()
         self._emit_state("closed")
         return {"success": True, "closed": True}
 

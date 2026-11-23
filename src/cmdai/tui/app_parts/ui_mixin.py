@@ -456,6 +456,13 @@ class UIMixin:
         "Nie zatrzymuj się na samej",
         "Wywołaj teraz subagenta",
         "oraz przedstawić zwięzłe",
+        "Poprzednie wywołanie narzędzia zakończyło się błędem",
+        "Narzędzia zostały już wykonane.",
+        "Zakończyłeś fazę myślenia",
+        "[image question]",
+        "[vision:",
+        "[SYSTEM",
+        "[System",
     )
 
     def _get_timeline_user_cards(self, scroll: VerticalScroll) -> List[UserMessageCard]:

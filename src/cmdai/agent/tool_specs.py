@@ -201,12 +201,63 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
     },
     {
         "name": "screenshot",
-        "description": "Capture a screenshot of the active window or screen for visual inspection.",
+        "description": (
+            "Quick 1-image screenshot (opens in Web Screenshot Viewer). Loads ANY external https:// URL, local HTML file ('index.html', 'src/index.html'), specific UI section ('selector'), or Windows OS window ('VS Code', 'list_windows', 'screen') directly—never needs 'browser'."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
-                "target": {"type": "string", "description": "Capture target, e.g. 'active_window' or 'screen'"},
+                "target": {
+                    "type": "string",
+                    "description": "What to capture: URL ('https://...'), local HTML file ('index.html', 'src/index.html'), 'auto', 'browser', OS window title ('VS Code', 'Chrome', 'Antigravity'), 'list_windows', or 'screen'.",
+                },
+                "selector": {
+                    "type": "string",
+                    "description": "Optional CSS selector ('#pomodoro-card', 'form') OR section/feature name ('Transactions') to crop to that container.",
+                },
+                "click": {
+                    "type": "string",
+                    "description": "Optional CSS selector or button/tab label to click before capturing (e.g. '#tab-settings' or 'Settings').",
+                },
+                "device": {
+                    "type": "string",
+                    "enum": ["desktop", "mobile", "tablet"],
+                    "description": "Optional web viewport ('mobile'=390x844, 'tablet'=768x1024, 'desktop'=1280x800).",
+                },
+                "full_page": {
+                    "type": "boolean",
+                    "description": "Optional: capture the entire scrollable height of the page (default false).",
+                },
             },
+        },
+    },
+    {
+        "name": "shots",
+        "description": (
+            "Launch the isolated autonomous Shots Subagent (works like 'browser' in a separate context, but specialized in capturing and saving crisp 2x PNG screenshots). Opens any https:// URL OR local HTML file (e.g. 'src/index.html', auto-served on a random free local port), navigates/clicks/switches viewports to fulfill the task, and saves every requested screenshot into ONE grouped 'Shots' card."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "Target URL (e.g. https://spbb.pl, http://127.0.0.1:1010) OR local file path inside workspace (e.g. src/index.html, index.html)",
+                },
+                "task": {
+                    "type": "string",
+                    "description": "Complete instructions for the Shots Subagent (which pages, tabs, modals, sections, or mobile/desktop views to visit and capture)",
+                },
+                "device": {
+                    "type": "string",
+                    "enum": ["mobile", "tablet"],
+                    "description": "Optional starting viewport ('mobile'=390x844, 'tablet'=768x1024); omit for desktop.",
+                },
+                "max_captures": {
+                    "type": "integer",
+                    "description": "Optional maximum number of screenshots to save (default 8, max 12).",
+                },
+            },
+            "required": ["url", "task"],
         },
     },
     {
