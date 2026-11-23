@@ -717,6 +717,10 @@ class CliTransferReq(BaseModel):
     paths: Optional[List[str]] = None
 
 
+class RulesSaveReq(BaseModel):
+    content: str = ""
+
+
 DEFAULT_VISIBLE_MODELS = [
     "localllmapi:gemma-4-12B-it-Q4_K_M.gguf",
     "openrouter:deepseek/deepseek-r1:free",
@@ -1611,6 +1615,27 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
         mgr.save_config()
         _invalidate_providers_cache()
         return {"ok": True, "models_state": _build_providers_payload(mgr, force_refresh=True)}
+
+    @app.get("/api/rules")
+    def get_rules_studio() -> Dict[str, Any]:
+        from cmdai.agent.runner import inspect_project_rules
+
+        wd: Path = state["workdir"]
+        return {"ok": True, **inspect_project_rules(str(wd))}
+
+    @app.post("/api/rules")
+    def save_rules_studio(req: RulesSaveReq) -> Dict[str, Any]:
+        from cmdai.agent.runner import inspect_project_rules
+
+        wd: Path = state["workdir"]
+        target = wd / "AGENTS.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        normalized = str(req.content or "").replace("\r\n", "\n")
+        target.write_text(normalized, encoding="utf-8")
+        return {
+            "ok": True,
+            **inspect_project_rules(str(wd)),
+        }
 
     @app.get("/api/editor/tree")
     def editor_tree(limit: int = 1200) -> Dict[str, Any]:

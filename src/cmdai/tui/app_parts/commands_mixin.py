@@ -133,7 +133,7 @@ class CommandsMixin:
                 "/diff", "/commit", "/todo", "/bg",
                 "/ctx", "/add", "/mode", "/thinking",
                 "/cd", "/changelog", "/update", "/updatesettings", "/mcp",
-                "/custom", "/plugins", "/memory", "/map",
+                "/custom", "/plugins", "/memory", "/rules", "/agents", "/map",
                 "/tunnel", "/tunel", "/share", "/unshare", "/browser"
             )
             if cmd in modal_cmds:
@@ -249,6 +249,8 @@ class CommandsMixin:
             "/custom": self._cmd_custom,
             "/plugins": self._cmd_plugins,
             "/memory": self._cmd_memory,
+            "/rules": self._cmd_rules,
+            "/agents": self._cmd_rules,
             "/loader": self._cmd_loader,
             "/exit": self._cmd_quit,
         }
@@ -275,6 +277,10 @@ class CommandsMixin:
     def _cmd_memory(self, arg: str = "") -> None:
         from ..modals.memory import MemoryModal
         self.push_screen(MemoryModal(self.workdir))
+
+    def _cmd_rules(self, arg: str = "") -> None:
+        from ..modals.rules import RulesModal
+        self.push_screen(RulesModal(self.workdir))
 
     def _cmd_map(self, arg: str = "") -> None:
         target = os.path.join(self.workdir, arg.strip()) if arg.strip() else self.workdir
@@ -366,7 +372,7 @@ class CommandsMixin:
                       "/new", "/params", "/help", "/loader", "/settings",
                       "/tools", "/status", "/diff", "/commit",
                       "/todo", "/bg", "/ctx", "/add", "/mode", "/thinking",
-                      "/changelog", "/update", "/updatesettings", "/mcp", "/custom", "/plugins", "/memory", "/tunnel", "/tunel", "/share", "/unshare", "/exit")
+                      "/changelog", "/update", "/updatesettings", "/mcp", "/custom", "/plugins", "/memory", "/rules", "/agents", "/tunnel", "/tunel", "/share", "/unshare", "/exit")
         if not self.in_chat_mode and cmd not in modal_cmds:
             self._switch_to_chat()
         self._dispatch_command(cmd)

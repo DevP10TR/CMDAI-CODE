@@ -111,6 +111,7 @@ const SLASH_COMMANDS = [
   { cmd: "/add", icon: "checkup", desc: "Pin files to conversation context (@)" },
   { cmd: "/drop", icon: "eraser", desc: "Remove pinned files from conversation context" },
   { cmd: "/memory", icon: "file-text", desc: "View and manage cross-session persistent memory (.cmdai/memory.md)" },
+  { cmd: "/rules", icon: "file-text", desc: "View and edit project instructions (AGENTS.md)" },
   { cmd: "/mode", icon: "tool", desc: "Toggle/cycle agent execution mode (auto / code / plan)" },
   { cmd: "/thinking", icon: "bulb", desc: "Show or set thinking effort level" },
   { cmd: "/system", icon: "sparkles", desc: "Inspect or switch system prompt" },
@@ -2998,6 +2999,114 @@ function openSettingsAtTab(tabId) {
   document.getElementById(`stab-${tabId}`)?.classList.add("active");
 }
 
+function openRulesModal() {
+  document.getElementById("settings-overlay")?.classList.add("hidden");
+  document.getElementById("rules-overlay")?.classList.remove("hidden");
+  return loadRulesStudio();
+}
+
+function closeRulesModal() {
+  document.getElementById("rules-overlay")?.classList.add("hidden");
+}
+
+const rulesStudioState = {
+  data: null,
+  dirty: false,
+};
+
+const _RULES_SNIPPETS = {
+  build: "\n## Build & Test Commands\n- Run tests: `pytest`\n- Build: ``\n",
+  style: "\n## Code Style & Conventions\n- Keep functions concise and single-purpose.\n- Reuse existing helpers instead of duplicating logic.\n",
+  safety: "\n## Safety & Constraints\n- Never commit secrets, `.env` files, or API keys.\n- Ask before destructive changes or deleting user data.\n",
+  language: "\n## Language & Communication\n- Respond in Polish; write code, symbols, and commit messages in English.\n",
+};
+
+function _estimateRuleTokens(text) {
+  const cleaned = String(text || "").trim();
+  if (!cleaned) return 0;
+  return Math.max(1, Math.floor(cleaned.length / 4));
+}
+
+function updateRulesTokenBadge() {
+  const badge = document.getElementById("rules-token-badge");
+  if (!badge) return;
+  const ta = document.getElementById("rules-editor-textarea");
+  const val = ta ? ta.value : "";
+  const tok = _estimateRuleTokens(val);
+  badge.textContent = `~${tok} tok · ${val.length} chars`;
+  badge.classList.toggle("warn", tok > 2000);
+}
+
+async function loadRulesStudio() {
+  const statusEl = document.getElementById("rules-save-status");
+  const pathEl = document.getElementById("rules-file-path");
+  const ta = document.getElementById("rules-editor-textarea");
+  try {
+    const resp = await fetch("/api/rules");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    rulesStudioState.data = data;
+    rulesStudioState.dirty = false;
+    if (pathEl) {
+      const rawP = data.path || "AGENTS.md";
+      pathEl.textContent = data.exists ? rawP : `${rawP} (not created yet)`;
+      pathEl.title = rawP;
+    }
+    if (ta) {
+      ta.value = data.content || "";
+      ta.focus();
+    }
+    if (statusEl) statusEl.textContent = "";
+    updateRulesTokenBadge();
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `Could not load AGENTS.md: ${err?.message || err}`;
+  }
+}
+
+async function saveRulesStudio() {
+  const ta = document.getElementById("rules-editor-textarea");
+  const pathEl = document.getElementById("rules-file-path");
+  const content = ta ? ta.value : "";
+  const statusEl = document.getElementById("rules-save-status");
+  if (statusEl) statusEl.textContent = "Saving...";
+  try {
+    const resp = await fetch("/api/rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({}));
+      throw new Error(errData.detail || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    rulesStudioState.data = data;
+    rulesStudioState.dirty = false;
+    if (pathEl) {
+      const rawP = data.path || "AGENTS.md";
+      pathEl.textContent = data.exists ? rawP : `${rawP} (not created yet)`;
+      pathEl.title = rawP;
+    }
+    updateRulesTokenBadge();
+    if (statusEl) statusEl.textContent = "Saved AGENTS.md — applies on next message.";
+    toast("AGENTS.md saved");
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `Save failed: ${err?.message || err}`;
+  }
+}
+
+function insertRulesSnippet(kind) {
+  const snippet = _RULES_SNIPPETS[kind];
+  const ta = document.getElementById("rules-editor-textarea");
+  if (!snippet || !ta) return;
+  const cur = ta.value;
+  const sep = cur.length > 0 && !cur.endsWith("\n") ? "\n" : "";
+  ta.value = cur + sep + snippet.replace(/^\n/, "");
+  rulesStudioState.dirty = true;
+  updateRulesTokenBadge();
+  ta.focus();
+}
+
 function openNewProjectPane() {
   document.getElementById("settings-overlay")?.classList.remove("hidden");
   document.querySelectorAll(".settings-tab, #settings-projects-nav .ag-sb-item").forEach((t) => t.classList.remove("active"));
@@ -3134,7 +3243,14 @@ async function renderProjectSettingsPane(wsPath, opts = {}) {
           <div><strong>${escapeHtml(c.name)}</strong> <span class="ag-skill-badge">${escapeHtml(c.kind)}</span></div>
           <span style="font-family:var(--font-mono);color:var(--text-muted);">${escapeHtml(c.path)}</span>
         `;
-        row.addEventListener("click", () => openCustomizationReader(c.name, c.path));
+        row.addEventListener("click", () => {
+          const pNorm = String(c.path || "").replace(/\\/g, "/");
+          if (pNorm === "AGENTS.md") {
+            openRulesModal();
+          } else {
+            openCustomizationReader(c.name, c.path);
+          }
+        });
         custList.appendChild(row);
       });
     }
@@ -3212,6 +3328,10 @@ async function runSlashCommand(rawInput) {
     case "/settings":
     case "/params":
       openSettingsAtTab("agent");
+      return true;
+    case "/rules":
+    case "/agents":
+      await openRulesModal();
       return true;
     case "/loader":
     case "/updatesettings":
@@ -4984,6 +5104,21 @@ function bindEvents() {
   document.querySelectorAll(".settings-tab").forEach((tab) => {
     tab.addEventListener("click", () => openSettingsAtTab(tab.dataset.stab));
   });
+  document.querySelectorAll("#rules-snippets-bar .rules-chip").forEach((chip) => {
+    chip.addEventListener("click", () => insertRulesSnippet(chip.dataset.snippet));
+  });
+  document.getElementById("btn-rules-save")?.addEventListener("click", saveRulesStudio);
+  document.getElementById("rules-editor-textarea")?.addEventListener("input", () => {
+    rulesStudioState.dirty = true;
+    updateRulesTokenBadge();
+  });
+  document.getElementById("rules-editor-textarea")?.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      e.stopPropagation();
+      saveRulesStudio();
+    }
+  });
   document.querySelectorAll(".ag-theme-card").forEach((card) => {
     card.addEventListener("click", async () => {
       const choice = card.dataset.themeChoice || "light";
@@ -5059,7 +5194,8 @@ function bindEvents() {
     }
   });
 
-  ["settings-overlay", "quick-open-overlay"].forEach((id) => {
+  document.getElementById("btn-close-rules")?.addEventListener("click", closeRulesModal);
+  ["settings-overlay", "quick-open-overlay", "rules-overlay"].forEach((id) => {
     document.getElementById(id)?.addEventListener("click", (e) => {
       if (e.target.id === id) e.target.classList.add("hidden");
     });
@@ -5067,6 +5203,11 @@ function bindEvents() {
 
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    const rulesOv = document.getElementById("rules-overlay");
+    if (rulesOv && !rulesOv.classList.contains("hidden")) {
+      closeRulesModal();
+      return;
+    }
     const settingsOv = document.getElementById("settings-overlay");
     if (settingsOv && !settingsOv.classList.contains("hidden")) {
       settingsOv.classList.add("hidden");

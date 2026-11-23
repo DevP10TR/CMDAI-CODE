@@ -2480,10 +2480,19 @@ _FULL_DIRECTIVES_BLOCK = (
 )
 
 
+def _estimate_rule_tokens(text: str) -> int:
+    """Approximate token count (~4 chars/token) for rule budgeting."""
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return 0
+    return max(1, len(cleaned) // 4)
+
+
 def load_project_instructions(workdir: str = ".") -> str:
     """Read project rules (AGENTS.md/CLAUDE.md), cross-session memory, and enabled plugin rules."""
     import os
     sections: List[str] = []
+
     if workdir and os.path.isdir(workdir):
         candidates = ["AGENTS.md", "agents.md", ".agents.md", "CLAUDE.md", ".cursorrules"]
         for fname in candidates:
@@ -2514,6 +2523,28 @@ def load_project_instructions(workdir: str = ".") -> str:
     except Exception:
         pass
     return "".join(sections)
+
+
+def inspect_project_rules(workdir: str = ".") -> Dict[str, Any]:
+    """Return metadata, content, and token count for the project's AGENTS.md."""
+    abs_work = os.path.abspath(workdir or ".")
+    agents_path = os.path.join(abs_work, "AGENTS.md")
+    exists = os.path.isfile(agents_path)
+    content = ""
+    if exists:
+        try:
+            with open(agents_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except Exception:
+            content = ""
+    return {
+        "workdir": abs_work,
+        "path": agents_path,
+        "exists": exists,
+        "content": content,
+        "chars": len(content),
+        "tokens": _estimate_rule_tokens(content),
+    }
 
 
 def get_agent_system_prompt(workdir: str = ".", mode: str = "auto", vision: bool = False) -> str:

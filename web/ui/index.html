@@ -9,7 +9,7 @@
   <meta name="theme-color" id="meta-theme-color" content="#f4f5f7" />
   <title>CMDAI CODE</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2318181b'/%3E%3Cpath d='M7 9h7v3H10v8h4v3H7V9zm11 0h7v3h-4v8h4v3h-7V9z' fill='%23ffffff'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="/styles.css?v=20261122x" />
+  <link rel="stylesheet" href="/styles.css?v=20261123c" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" crossorigin="anonymous" />
   <script defer src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js" crossorigin="anonymous"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js" crossorigin="anonymous"></script>
@@ -1492,10 +1492,51 @@
     </div>
   </div>
 
+  <!-- RULES & AGENTS.MD MODAL (/rules) -->
+  <div id="rules-overlay" class="modal-overlay hidden">
+    <div class="rules-dialog animate-pop" role="dialog" aria-modal="true" aria-labelledby="rules-modal-title">
+      <div class="rules-modal-head">
+        <div>
+          <h2 id="rules-modal-title" class="ag-pane-title" style="margin:0;">AGENTS.md</h2>
+          <p class="ag-pane-sub" style="margin:4px 0 0;">Project instructions for this workspace. Saved changes take effect on the next message.</p>
+        </div>
+        <button id="btn-close-rules" type="button" class="sb-icon-tiny" title="Close (/rules)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="rules-modal-body">
+        <div class="rules-toolbar">
+          <span id="rules-file-path" class="rules-path-label">AGENTS.md</span>
+          <div class="rules-toolbar-actions">
+            <span id="rules-token-badge" class="rules-token-badge">~0 tok · 0 chars</span>
+            <button type="button" id="btn-rules-save" class="ed-action-btn primary small">Save</button>
+          </div>
+        </div>
+
+        <div id="rules-snippets-bar" class="rules-snippets-bar">
+          <span class="rules-snippets-label">Quick sections:</span>
+          <button type="button" class="rules-chip" data-snippet="build">+ Build &amp; Test</button>
+          <button type="button" class="rules-chip" data-snippet="style">+ Code Style</button>
+          <button type="button" class="rules-chip" data-snippet="safety">+ Safety</button>
+          <button type="button" class="rules-chip" data-snippet="language">+ Language</button>
+        </div>
+
+        <textarea
+          id="rules-editor-textarea"
+          class="rules-editor-textarea"
+          spellcheck="false"
+          placeholder="Write project instructions for AGENTS.md... Press Ctrl+S to save."
+        ></textarea>
+
+        <div id="rules-save-status" class="rules-save-status"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="toast-container" class="toast-container"></div>
 
   <script type="module" src="/editor.js?v=20261122x"></script>
   <script type="module" src="/map.js?v=20261122x"></script>
-  <script type="module" src="/app.js?v=20261122x"></script>
+  <script type="module" src="/app.js?v=20261123c"></script>
 </body>
 </html>
