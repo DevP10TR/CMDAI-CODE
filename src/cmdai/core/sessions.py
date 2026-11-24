@@ -684,11 +684,14 @@ def transcript_from_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, A
                            else _tool_event(call["tool"], call["target"], empty))
             pending.clear()
 
-            out.append({
+            u_ev: Dict[str, Any] = {
                 "kind": "user",
                 "text": content,
-                "turn_id": int(m.get("turn_id") or 0)
-            })
+                "turn_id": int(m.get("turn_id") or 0),
+            }
+            if m.get("images") and isinstance(m.get("images"), list):
+                u_ev["images"] = list(m["images"])
+            out.append(u_ev)
             continue
 
         # 3. Role "assistant" (or system/other):

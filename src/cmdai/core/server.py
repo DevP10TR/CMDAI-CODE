@@ -139,11 +139,22 @@ class BackgroundHTTPServer:
             for child in children:
                 cls_name = type(child).__name__
                 if cls_name == "UserMessageCard":
-                    live_transcript.append({
+                    u_item: Dict[str, Any] = {
                         "kind": "user",
                         "text": str(getattr(child, "prompt", "") or ""),
                         "time": str(getattr(child, "time_str", "") or ""),
-                    })
+                    }
+                    raw_imgs = getattr(child, "images", None)
+                    if raw_imgs:
+                        try:
+                            from .images import serialize_images_for_ui
+
+                            ui_imgs = serialize_images_for_ui(raw_imgs, max_dim=480)
+                            if ui_imgs:
+                                u_item["images"] = ui_imgs
+                        except Exception:
+                            pass
+                    live_transcript.append(u_item)
                 elif cls_name == "AssistantTurnCard":
                     card_start_idx = len(live_transcript)
                     card_gen = bool(getattr(child, "is_generating", False))
@@ -245,9 +256,30 @@ class BackgroundHTTPServer:
 
             if not live_transcript:
                 try:
-                    live_transcript = [dict(x) for x in list(getattr(app, "_transcript", []) or []) if isinstance(x, dict)]
+                    from .images import serialize_images_for_ui
+
+                    raw_tr = [dict(x) for x in list(getattr(app, "_transcript", []) or []) if isinstance(x, dict)]
+                    for item in raw_tr:
+                        if item.get("kind") == "user" and item.get("images"):
+                            item["images"] = serialize_images_for_ui(item.get("images"), max_dim=480)
+                    live_transcript = raw_tr
                 except Exception:
                     live_transcript = []
+            else:
+                try:
+                    user_msg_imgs = [
+                        m.get("images") or []
+                        for m in (base.get("messages") or [])
+                        if isinstance(m, dict) and m.get("role") == "user"
+                    ]
+                    u_ptr = 0
+                    for item in live_transcript:
+                        if isinstance(item, dict) and item.get("kind") == "user":
+                            if not item.get("images") and u_ptr < len(user_msg_imgs) and user_msg_imgs[u_ptr]:
+                                item["images"] = list(user_msg_imgs[u_ptr])
+                            u_ptr += 1
+                except Exception:
+                    pass
 
         if bool(base.get("is_generating")) and live_phase == "idle":
             live_phase = "writing" if str(base.get("streaming_text") or "").strip() else "loading"
@@ -287,13 +319,23 @@ class BackgroundHTTPServer:
                 content = "\n".join(
                     str(part.get("text", "")) for part in content if isinstance(part, dict)
                 )
-            ui_msgs.append({
+            msg_obj: Dict[str, Any] = {
                 "role": role,
                 "content": str(content or ""),
                 "thinking": str(m.get("thinking") or ""),
                 "tools": m.get("tools") or [],
                 "model": str(m.get("model") or getattr(app, "current_model_id", "")),
-            })
+            }
+            if role == "user" and m.get("images"):
+                try:
+                    from .images import serialize_images_for_ui
+
+                    ui_imgs = serialize_images_for_ui(m.get("images"), max_dim=480)
+                    if ui_imgs:
+                        msg_obj["images"] = ui_imgs
+                except Exception:
+                    pass
+            ui_msgs.append(msg_obj)
 
         title = "CMDAI CODE"
         for m in ui_msgs:

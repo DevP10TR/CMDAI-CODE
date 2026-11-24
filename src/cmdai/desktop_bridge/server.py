@@ -674,6 +674,7 @@ class AgentStreamReq(BaseModel):
     mode: str = "auto"
     thinking_level: str = "medium"
     pinned_files: List[str] = Field(default_factory=list)
+    images: List[Any] = Field(default_factory=list)
     use_live: bool = True
 
 
@@ -1150,6 +1151,20 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
         sm = SessionManager(project_dir=str(wd))
         return {"sessions": _format_sessions_summary(sm.list_sessions(str(wd))[:40])}
 
+    def _normalize_session_images(loaded: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            from cmdai.core.images import serialize_images_for_ui
+
+            for ev in loaded.get("transcript") or []:
+                if isinstance(ev, dict) and ev.get("kind") == "user" and ev.get("images"):
+                    ev["images"] = serialize_images_for_ui(ev.get("images"), max_dim=640)
+            for msg in loaded.get("messages") or []:
+                if isinstance(msg, dict) and msg.get("role") == "user" and msg.get("images"):
+                    msg["images"] = serialize_images_for_ui(msg.get("images"), max_dim=640)
+        except Exception:
+            pass
+        return loaded
+
     @app.get("/api/sessions/{session_id}")
     def get_session(session_id: str) -> Dict[str, Any]:
         wd: Path = state["workdir"]
@@ -1163,7 +1178,7 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
                 loaded["transcript"] = transcript_from_messages(loaded["messages"])
             except Exception:
                 loaded["transcript"] = []
-        return loaded
+        return _normalize_session_images(loaded)
 
     def _build_bridge_live_payload(wd: Path) -> Dict[str, Any]:
         sm = SessionManager(project_dir=str(wd))
@@ -1179,6 +1194,7 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
                 transcript = transcript_from_messages(messages)
             except Exception:
                 transcript = []
+        norm_holder = _normalize_session_images({"transcript": transcript, "messages": messages})
         return {
             "ok": True,
             "spectate": True,
@@ -1187,8 +1203,8 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
             "model_id": str(loaded.get("model_id") or loaded.get("model") or ""),
             "mode": str(loaded.get("agent_mode") or "auto"),
             "is_generating": False,
-            "transcript": transcript,
-            "messages": messages,
+            "transcript": norm_holder.get("transcript") or [],
+            "messages": norm_holder.get("messages") or [],
             "streaming_text": "",
         }
 
@@ -2360,6 +2376,25 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
         has_live_cred = local_reachable if is_local_api else (True if is_keyless else bool(api_key.strip()))
         should_run_live = req.use_live and has_live_cred and not model.startswith("(")
 
+        from cmdai.core.images import save_data_url_image, serialize_images_for_ui
+
+        saved_image_paths: List[str] = []
+        for raw_img in req.images or []:
+            if isinstance(raw_img, dict):
+                src_val = str(raw_img.get("data_url") or raw_img.get("url") or raw_img.get("path") or "").strip()
+                name_hint = str(raw_img.get("name") or "").strip()
+            else:
+                src_val = str(raw_img or "").strip()
+                name_hint = ""
+            if not src_val:
+                continue
+            saved_p = save_data_url_image(src_val, name_hint=name_hint)
+            if saved_p:
+                saved_image_paths.append(saved_p)
+            elif src_val.lower().startswith("data:image/"):
+                saved_image_paths.append(src_val)
+        preview_image_urls = serialize_images_for_ui(saved_image_paths, max_dim=512)
+
         async def event_generator():
             def emit(ev_type: str, payload: Dict[str, Any]) -> str:
                 return f"data: {json.dumps({'type': ev_type, **payload}, ensure_ascii=False)}\n\n"
@@ -2600,6 +2635,7 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
                                 on_tool_stream=_on_tool_stream,
                                 on_subagent_event=_on_subagent_event,
                                 max_steps=max(15, max_steps_cfg),
+                                images=saved_image_paths,
                             )
                         finally:
                             _b_eng.remove_listener(_on_browser_ev)
@@ -2608,9 +2644,12 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
                                 sm = SessionManager(project_dir=str(wd))
                                 existing = sm.load_session(session_id)
                                 title = (existing or {}).get("title") or clean_title_from_prompt(req.prompt)
+                                fallback_user: Dict[str, Any] = {"role": "user", "content": req.prompt}
+                                if saved_image_paths:
+                                    fallback_user["images"] = list(saved_image_paths)
                                 saved_msgs = list(runtime.messages) if runtime.messages else (
                                     list((existing or {}).get("messages") or [])
-                                    + [{"role": "user", "content": req.prompt}, {"role": "assistant", "content": final or ""}]
+                                    + [fallback_user, {"role": "assistant", "content": final or ""}]
                                 )
                                 sm.save_session(
                                     session_id=session_id,
@@ -2746,10 +2785,23 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
                     sm = SessionManager(project_dir=str(wd))
                     existing = sm.load_session(session_id)
                     prior_msgs = list((existing or {}).get("messages") or [])
+                    user_entry: Dict[str, Any] = {"role": "user", "content": req.prompt}
+                    if saved_image_paths:
+                        user_entry["images"] = list(saved_image_paths)
                     prior_msgs.extend(
                         [
-                            {"role": "user", "content": req.prompt},
+                            user_entry,
                             {"role": "assistant", "content": answer_md},
+                        ]
+                    )
+                    prior_tr = list((existing or {}).get("transcript") or [])
+                    tr_user: Dict[str, Any] = {"kind": "user", "text": req.prompt}
+                    if preview_image_urls:
+                        tr_user["images"] = list(preview_image_urls)
+                    prior_tr.extend(
+                        [
+                            tr_user,
+                            {"kind": "assistant", "text": answer_md},
                         ]
                     )
                     title = (existing or {}).get("title") or clean_title_from_prompt(req.prompt)
@@ -2760,6 +2812,7 @@ def create_app(app_root: Optional[Path] = None, workdir: Optional[Path] = None) 
                         model_id=model,
                         provider_id=provider,
                         agent_mode=req.mode,
+                        transcript=prior_tr,
                         workdir=str(wd),
                     )
                 except Exception:

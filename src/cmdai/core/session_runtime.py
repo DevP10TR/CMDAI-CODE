@@ -74,11 +74,40 @@ class SessionRuntime:
         on_tool_stream: Optional[Callable[[str, str, int, str], None]] = None,
         on_subagent_event: Optional[Callable[[Dict[str, Any]], None]] = None,
         max_steps: int = 15,
+        images: Optional[List[str]] = None,
     ) -> str:
         """Run a full autonomous agent turn for the given prompt."""
         self.abort_requested = False
-        self.messages.append({"role": "user", "content": user_prompt})
-        self.transcript.append({"kind": "user", "text": user_prompt})
+
+        saved_paths: List[str] = []
+        preview_urls: List[str] = []
+        if images:
+            from .images import encode_image_data_url, save_data_url_image
+
+            for raw_img in images:
+                sp = save_data_url_image(str(raw_img or ""))
+                if sp:
+                    saved_paths.append(sp)
+                    prev = encode_image_data_url(sp, max_dim=512)
+                    if prev:
+                        preview_urls.append(prev)
+                else:
+                    s_raw = str(raw_img or "").strip()
+                    if s_raw.lower().startswith("data:image/"):
+                        saved_paths.append(s_raw)
+                        prev = encode_image_data_url(s_raw, max_dim=512)
+                        if prev:
+                            preview_urls.append(prev)
+
+        user_msg: Dict[str, Any] = {"role": "user", "content": user_prompt}
+        if saved_paths:
+            user_msg["images"] = list(saved_paths)
+        self.messages.append(user_msg)
+
+        user_tr: Dict[str, Any] = {"kind": "user", "text": user_prompt}
+        if preview_urls:
+            user_tr["images"] = list(preview_urls)
+        self.transcript.append(user_tr)
 
         gen_params = self.settings.config.get("generation", {})
         final_answer = ""
@@ -87,9 +116,48 @@ class SessionRuntime:
             if self.abort_requested:
                 break
 
-            # Build system prompt with tools and AGENTS.md rules
-            sys_prompt = get_agent_system_prompt(self.workdir, mode=self.mode)
-            payload_messages = [{"role": "system", "content": sys_prompt}] + self.messages
+            # Build system prompt with tools, AGENTS.md rules, and inline vision handling
+            has_attached_images = any(
+                isinstance(m, dict) and bool(m.get("images"))
+                for m in self.messages
+            )
+            sys_prompt = get_agent_system_prompt(
+                self.workdir,
+                mode=self.mode,
+                vision=not has_attached_images,
+            )
+            if has_attached_images:
+                sys_prompt += (
+                    "\n\nIMAGE INPUT INSTRUCTION:\n"
+                    "The user's attached image(s) are ALREADY embedded directly in this conversation for you "
+                    "to see visually. Inspect the attached image(s) directly and answer the user's question in "
+                    "plain text. NEVER call <tool:vision> for attached images, do NOT claim you cannot see "
+                    "images, and do NOT call codebase/filesystem tools unless the user explicitly asks about "
+                    "files or code."
+                )
+
+            payload_messages: List[Dict[str, Any]] = [{"role": "system", "content": sys_prompt}]
+            if has_attached_images:
+                from .images import build_multimodal_content
+
+                img_max_dim = 1024 if self.current_provider in ("localllmapi", "local_gguf") else 1600
+                for wm in self.messages:
+                    if isinstance(wm, dict) and wm.get("role") == "user" and wm.get("images"):
+                        mm_msg = dict(wm)
+                        img_list = list(wm.get("images") or [])
+                        if self.current_provider == "local_gguf":
+                            mm_msg["content"] = str(wm.get("content") or "") + "\n[Attached image file(s): " + ", ".join(str(p) for p in img_list) + "]"
+                        else:
+                            mm_msg["content"] = build_multimodal_content(
+                                str(wm.get("content") or ""),
+                                img_list,
+                                max_dim=img_max_dim,
+                            )
+                        payload_messages.append(mm_msg)
+                    else:
+                        payload_messages.append(wm)
+            else:
+                payload_messages.extend(self.messages)
 
             native_tools = get_native_tool_schemas(mode=self.mode) if self.current_provider != "local_gguf" else None
 

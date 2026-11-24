@@ -88,11 +88,101 @@ def grab_clipboard_image_to_temp() -> Optional[str]:
     return None
 
 
-def encode_image_data_url(path: str, max_dim: int = 1600) -> Optional[str]:
-    """Read `path`, optionally resize to `max_dim`, and return `data:image/...;base64,...`."""
-    if not path or not os.path.isfile(path):
+def _screenshots_dir() -> str:
+    d = os.path.join(os.path.expanduser("~"), ".cmdai", "screenshots")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def save_data_url_image(data_url_or_path: str, name_hint: str = "") -> Optional[str]:
+    """Resolve a local image path or decode a base64 `data:image/...` URL into `~/.cmdai/screenshots`."""
+    raw = str(data_url_or_path or "").strip()
+    if not raw:
         return None
-    ext = os.path.splitext(path)[1].lower()
+    existing = is_image_file_path(raw)
+    if existing:
+        return existing
+    if not raw.lower().startswith("data:image/") or ";base64," not in raw:
+        return None
+
+    header, b64_payload = raw.split(";base64,", 1)
+    mime_sub = header.split("/", 1)[1].split(";", 1)[0].strip().lower()
+    ext_map = {
+        "png": "png",
+        "jpeg": "jpg",
+        "jpg": "jpg",
+        "webp": "webp",
+        "gif": "gif",
+        "bmp": "bmp",
+    }
+    ext = ext_map.get(mime_sub)
+    if not ext:
+        return None
+
+    try:
+        raw_bytes = base64.b64decode(b64_payload.strip(), validate=False)
+    except Exception:
+        return None
+    if not raw_bytes or len(raw_bytes) > 12 * 1024 * 1024:
+        return None
+
+    import re as _re
+
+    stem = os.path.splitext(os.path.basename(str(name_hint or "paste").strip()))[0]
+    clean_hint = _re.sub(r"[^a-zA-Z0-9._-]+", "_", stem).strip("._-")[:32] or "paste"
+    ts_ms = int(time.time() * 1000)
+    out_dir = _screenshots_dir()
+    out_path = os.path.join(out_dir, f"paste_{ts_ms}_{clean_hint}.{ext}")
+    idx = 2
+    while os.path.exists(out_path):
+        out_path = os.path.join(out_dir, f"paste_{ts_ms}_{clean_hint}_{idx}.{ext}")
+        idx += 1
+
+    try:
+        with open(out_path, "wb") as f:
+            f.write(raw_bytes)
+        if os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
+            return os.path.abspath(out_path)
+    except Exception:
+        return None
+    return None
+
+
+def encode_image_data_url(path: str, max_dim: int = 1600) -> Optional[str]:
+    """Read `path` (or normalize a `data:image/...` URL), resize to `max_dim`, and return `data:image/...;base64,...`."""
+    raw = str(path or "").strip()
+    if not raw:
+        return None
+    if raw.lower().startswith("data:image/") and ";base64," in raw:
+        try:
+            from PIL import Image  # type: ignore
+
+            header, b64_payload = raw.split(";base64,", 1)
+            raw_bytes = base64.b64decode(b64_payload.strip(), validate=False)
+            with Image.open(io.BytesIO(raw_bytes)) as img:
+                w, h = img.size
+                if max(w, h) <= max_dim:
+                    return raw
+                scale = max_dim / float(max(w, h))
+                img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                if img.mode in ("RGBA", "P", "LA"):
+                    bg = Image.new("RGB", img.size, (255, 255, 255))
+                    if img.mode == "P":
+                        img = img.convert("RGBA")
+                    bg.paste(img, mask=img.split()[-1] if "A" in img.mode else None)
+                    img = bg
+                elif img.mode != "RGB":
+                    img = img.convert("RGB")
+                img.save(buf, format="JPEG", quality=85)
+                b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                return f"data:image/jpeg;base64,{b64}"
+        except Exception:
+            return raw
+
+    if not os.path.isfile(raw):
+        return None
+    ext = os.path.splitext(raw)[1].lower()
     mime = "image/png"
     if ext in (".jpg", ".jpeg"):
         mime = "image/jpeg"
@@ -104,7 +194,7 @@ def encode_image_data_url(path: str, max_dim: int = 1600) -> Optional[str]:
     try:
         from PIL import Image  # type: ignore
 
-        with Image.open(path) as img:
+        with Image.open(raw) as img:
             w, h = img.size
             if max(w, h) > max_dim:
                 scale = max_dim / float(max(w, h))
@@ -125,11 +215,27 @@ def encode_image_data_url(path: str, max_dim: int = 1600) -> Optional[str]:
         pass
 
     try:
-        with open(path, "rb") as f:
+        with open(raw, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("ascii")
         return f"data:{mime};base64,{b64}"
     except Exception:
         return None
+
+
+def serialize_images_for_ui(images: Any, max_dim: int = 640) -> List[str]:
+    """Convert image file paths, data URLs, or dicts into compact Web-UI-safe data URLs."""
+    if not isinstance(images, (list, tuple)):
+        return []
+    out: List[str] = []
+    for item in images:
+        raw = item.get("data_url") or item.get("url") or item.get("path") if isinstance(item, dict) else item
+        s = str(raw or "").strip()
+        if not s:
+            continue
+        uri = encode_image_data_url(s, max_dim=max_dim)
+        if uri:
+            out.append(uri)
+    return out
 
 
 def build_multimodal_content(text: str, image_paths: List[str], max_dim: int = 1600) -> Any:

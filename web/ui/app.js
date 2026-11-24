@@ -192,6 +192,7 @@ const state = {
   openTabs: [{ tabId: "tab-init", sessionId: null, title: "New Chat" }],
   activeTabId: "tab-init",
   pinnedFiles: [],
+  attachedImages: [],
   treeEntries: [],
   filePaths: [],
   sessions: [],
@@ -1051,8 +1052,9 @@ async function loadSession(sessionId) {
       if (ev.kind === "user") {
         curCard = null;
         const txt = cleanMessageContent(String(ev.prompt || ev.content || ev.text || ""));
+        const imgs = Array.isArray(ev.images) ? ev.images : [];
         const tStr = formatShortTimestamp(ev.time || ev.timestamp || data.updated_at || "");
-        if (txt) appendUserBubble(txt, tStr);
+        if (txt || imgs.length) appendUserBubble(txt, tStr, imgs);
       } else if (ev.kind === "thinking") {
         const th = String(ev.text || ev.content || "");
         if (th.trim()) ensureCard().appendThinking(th);
@@ -1086,7 +1088,8 @@ async function loadSession(sessionId) {
       if (m.role === "user") {
         if (/^\s*<tool_result\b/i.test(rawContent)) continue;
         const cleanedUser = cleanMessageContent(rawContent);
-        if (cleanedUser) appendUserBubble(cleanedUser);
+        const imgs = Array.isArray(m.images) ? m.images : [];
+        if (cleanedUser || imgs.length) appendUserBubble(cleanedUser, "", imgs);
       } else if (m.role === "assistant") {
         const cleanedAssistant = cleanMessageContent(rawContent);
         if (!cleanedAssistant) continue;
@@ -1138,24 +1141,141 @@ async function refreshTree() {
   }
 }
 
-function togglePinnedFile(path, forcePin = null) {
-  const idx = state.pinnedFiles.indexOf(path);
-  const add = forcePin !== null ? forcePin : idx === -1;
-  if (add && idx === -1) state.pinnedFiles.push(path);
-  else if (!add && idx !== -1) state.pinnedFiles.splice(idx, 1);
+function openImageLightbox(src, caption = "") {
+  const ov = document.getElementById("img-lightbox-overlay");
+  const img = document.getElementById("img-lightbox-preview");
+  const cap = document.getElementById("img-lightbox-caption");
+  if (!ov || !img || !src) return;
+  img.src = src;
+  if (cap) cap.textContent = String(caption || "");
+  ov.classList.remove("hidden");
+}
 
+function closeImageLightbox() {
+  const ov = document.getElementById("img-lightbox-overlay");
+  const img = document.getElementById("img-lightbox-preview");
+  if (ov) ov.classList.add("hidden");
+  if (img) img.src = "";
+}
+
+function isImageAttachmentFile(file) {
+  if (!file) return false;
+  if (file.type && /^image\/(png|jpeg|jpg|webp|gif|bmp)/i.test(file.type)) return true;
+  const name = String(file.name || "").toLowerCase();
+  return /\.(png|jpe?g|webp|gif|bmp)$/i.test(name);
+}
+
+function addImageAttachmentFromFile(file) {
+  if (!isImageAttachmentFile(file)) return Promise.resolve(false);
+  if ((file.size || 0) > 12 * 1024 * 1024) {
+    toast("Image exceeds 12 MB limit");
+    return Promise.resolve(false);
+  }
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const rawDataUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!rawDataUrl) {
+        resolve(false);
+        return;
+      }
+      const cleanName = String(file.name || "").trim() || `pasted-${state.attachedImages.length + 1}.png`;
+      const finishAttach = (finalUrl, width = 0, height = 0) => {
+        state.attachedImages.push({
+          id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          name: cleanName,
+          dataUrl: finalUrl,
+          width,
+          height,
+          size: file.size || 0,
+        });
+        renderPinnedChips();
+        syncChatBottomPadding();
+        toast(`Attached image: ${cleanName}`);
+        resolve(true);
+      };
+
+      const isGif = /image\/gif/i.test(file.type || "") || /\.gif$/i.test(cleanName);
+      const img = new Image();
+      img.onload = () => {
+        const w = img.naturalWidth || img.width || 0;
+        const h = img.naturalHeight || img.height || 0;
+        const maxDim = 1568;
+        if (!isGif && Math.max(w, h) > maxDim && w > 0 && h > 0) {
+          try {
+            const scale = maxDim / Math.max(w, h);
+            const nw = Math.max(1, Math.round(w * scale));
+            const nh = Math.max(1, Math.round(h * scale));
+            const canvas = document.createElement("canvas");
+            canvas.width = nw;
+            canvas.height = nh;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, nw, nh);
+              const outMime = /image\/png/i.test(file.type || "") ? "image/png" : "image/jpeg";
+              const scaledUrl = canvas.toDataURL(outMime, 0.88);
+              finishAttach(scaledUrl || rawDataUrl, nw, nh);
+              return;
+            }
+          } catch (_) {
+            // fallback to original data URL
+          }
+        }
+        finishAttach(rawDataUrl, w, h);
+      };
+      img.onerror = () => finishAttach(rawDataUrl, 0, 0);
+      img.src = rawDataUrl;
+    };
+    reader.onerror = () => resolve(false);
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderPinnedChips() {
   const host = document.getElementById("pinned-chips");
   if (!host) return;
   host.innerHTML = "";
-  state.pinnedFiles.forEach((p) => {
+  (state.pinnedFiles || []).forEach((p) => {
     const baseName = p.split("/").pop();
     const chip = document.createElement("span");
     chip.className = "pinned-chip";
     chip.title = p;
-    chip.innerHTML = `${getFileIconHtml(baseName)}<span>${escapeHtml(baseName)}</span><button title="Remove">&times;</button>`;
+    chip.innerHTML = `${getFileIconHtml(baseName)}<span>${escapeHtml(baseName)}</span><button type="button" title="Remove">&times;</button>`;
     chip.querySelector("button").addEventListener("click", () => togglePinnedFile(p, false));
     host.appendChild(chip);
   });
+  (state.attachedImages || []).forEach((imgObj) => {
+    const chip = document.createElement("span");
+    chip.className = "pinned-chip image-chip";
+    chip.title = imgObj.name || "Attached image";
+    const dims = imgObj.width && imgObj.height ? `${imgObj.width}×${imgObj.height}` : "";
+    chip.innerHTML = `
+      <img class="pinned-chip-thumb" src="${escapeHtml(imgObj.dataUrl)}" alt="${escapeHtml(imgObj.name || "image")}" />
+      <span class="pinned-chip-name">${escapeHtml(imgObj.name || "image.png")}</span>
+      ${dims ? `<span class="pinned-chip-meta">${escapeHtml(dims)}</span>` : ""}
+      <button type="button" title="Remove">&times;</button>
+    `;
+    chip.querySelector(".pinned-chip-thumb")?.addEventListener("click", () => {
+      openImageLightbox(imgObj.dataUrl, imgObj.name || "Attached image");
+    });
+    chip.querySelector("button")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      state.attachedImages = (state.attachedImages || []).filter((x) => x.id !== imgObj.id);
+      renderPinnedChips();
+      syncChatBottomPadding();
+    });
+    host.appendChild(chip);
+  });
+}
+
+function togglePinnedFile(path, forcePin = null) {
+  if (path) {
+    const idx = state.pinnedFiles.indexOf(path);
+    const add = forcePin !== null ? forcePin : idx === -1;
+    if (add && idx === -1) state.pinnedFiles.push(path);
+    else if (!add && idx !== -1) state.pinnedFiles.splice(idx, 1);
+  }
+  renderPinnedChips();
 }
 
 async function loadCheckpointsOverlay() {
@@ -2141,14 +2261,35 @@ async function revertOrDeleteUserTurn(rowEl, restoreToInput = false) {
   }
 }
 
-function appendUserBubble(text, timeStr = "") {
+function appendUserBubble(text, timeStr = "", images = []) {
   const host = document.getElementById("chat-messages");
+  const normImgs = (Array.isArray(images) ? images : [])
+    .map((im, idx) => {
+      if (typeof im === "string" && im.trim()) return { src: im.trim(), name: `image-${idx + 1}` };
+      if (im && typeof im === "object") {
+        const src = String(im.dataUrl || im.data_url || im.url || "").trim();
+        if (src) return { src, name: String(im.name || `image-${idx + 1}`) };
+      }
+      return null;
+    })
+    .filter(Boolean);
+
+  const imgsHtml = normImgs.length
+    ? `<div class="msg-user-images${text ? "" : " no-text"}">${normImgs
+        .map(
+          (im, i) =>
+            `<img class="msg-user-img-thumb" data-img-idx="${i}" src="${escapeHtml(im.src)}" alt="${escapeHtml(im.name)}" title="${escapeHtml(im.name)}" />`
+        )
+        .join("")}</div>`
+    : "";
+  const textHtml = text ? `<div class="msg-user-text">${escapeHtml(text).replace(/\n/g, "<br>")}</div>` : "";
+
   const row = document.createElement("div");
   row.className = "msg-user-row";
   row.dataset.rawPrompt = text;
   row.innerHTML = `
     <div class="msg-user-wrap">
-      <div class="msg-user-bubble">${escapeHtml(text).replace(/\n/g, "<br>")}</div>
+      <div class="msg-user-bubble">${imgsHtml}${textHtml}</div>
       <div class="msg-user-actions">
         <button type="button" class="msg-u-act" data-uact="copy" title="Copy prompt">Copy</button>
         <button type="button" class="msg-u-act" data-uact="revert" title="Undo turn & edit prompt">Undo & Edit</button>
@@ -2156,6 +2297,13 @@ function appendUserBubble(text, timeStr = "") {
       </div>
     </div>
   `;
+  row.querySelectorAll(".msg-user-img-thumb").forEach((imgEl) => {
+    const idx = Number(imgEl.dataset.imgIdx || 0);
+    const meta = normImgs[idx];
+    if (meta) {
+      imgEl.addEventListener("click", () => openImageLightbox(meta.src, meta.name));
+    }
+  });
   row.querySelector('[data-uact="copy"]')?.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -2172,12 +2320,13 @@ function appendUserBubble(text, timeStr = "") {
   const defaultStamp = `${now.toLocaleDateString([], { month: "short", day: "numeric" })} ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
   const finalTime = String(timeStr || "").trim() || defaultStamp;
 
+  const previewLabel = text || (normImgs.length ? `[${normImgs.length} image(s)]` : "");
   const rail = document.getElementById("timeline-rail");
   const dotsHost = document.getElementById("timeline-dots") || rail;
   if (dotsHost) {
     const dot = document.createElement("span");
     dot.className = "tl-dot";
-    dot.dataset.preview = text.slice(0, 120);
+    dot.dataset.preview = previewLabel.slice(0, 120);
     dot.dataset.timeStr = finalTime;
     dot.addEventListener("mouseenter", () => {
       const allDots = Array.from(dotsHost.querySelectorAll(".tl-dot"));
@@ -2816,15 +2965,23 @@ function stopActiveGeneration() {
   toast("Generation stopped");
 }
 
-async function dispatchAgentPrompt(promptText) {
-  if (!promptText || state.isGenerating) return;
+async function dispatchAgentPrompt(promptText, attachedImages = null) {
+  const imgsToSend = Array.isArray(attachedImages)
+    ? attachedImages
+    : (state.attachedImages || []).slice();
+  if (!promptText && !imgsToSend.length) return;
+  if (state.isGenerating) return;
+  const finalPrompt = promptText || "Describe and analyze the attached image(s).";
+
+  state.attachedImages = [];
+  renderPinnedChips();
   closeModelsView();
   document.getElementById("hero-welcome")?.classList.add("hidden-hero");
-  appendUserBubble(promptText);
+  appendUserBubble(finalPrompt, "", imgsToSend);
 
   const curTab = getActiveTabObj();
   if (curTab && !curTab.sessionId) {
-    curTab.title = promptText.slice(0, 32) + (promptText.length > 32 ? "..." : "");
+    curTab.title = finalPrompt.slice(0, 32) + (finalPrompt.length > 32 ? "..." : "");
     renderTopbarTabs();
   }
 
@@ -2840,7 +2997,7 @@ async function dispatchAgentPrompt(promptText) {
   let receivedAnyEvent = false;
   try {
     const reqBody = JSON.stringify({
-      prompt: promptText,
+      prompt: finalPrompt,
       session_id: state.activeSessionId,
       workdir: state.workdir,
       provider: state.activeProvider,
@@ -2848,6 +3005,7 @@ async function dispatchAgentPrompt(promptText) {
       mode: state.mode,
       thinking_level: state.reasoningLevel,
       pinned_files: state.pinnedFiles,
+      images: imgsToSend.map((im) => ({ name: im.name || "image.png", data_url: im.dataUrl })),
       use_live: true,
     });
     let resp = null;
@@ -2973,7 +3131,8 @@ async function dispatchAgentPrompt(promptText) {
 async function sendPrompt() {
   const inp = document.getElementById("composer-input");
   const raw = (inp?.value || "").trim();
-  if (!raw || state.isGenerating) return;
+  const hasImgs = (state.attachedImages || []).length > 0;
+  if ((!raw && !hasImgs) || state.isGenerating) return;
 
   if (raw.startsWith("/")) {
     const handled = await runSlashCommand(raw);
@@ -3381,8 +3540,10 @@ async function runSlashCommand(rawInput) {
       return true;
     case "/drop":
       state.pinnedFiles = [];
-      togglePinnedFile("", false);
-      toast("Cleared attached file chips");
+      state.attachedImages = [];
+      renderPinnedChips();
+      syncChatBottomPadding();
+      toast("Cleared attached context and images");
       return true;
     case "/ctx":
       toast(`Project: ${state.workdir} · Attached files: ${state.pinnedFiles.length}`);
@@ -4685,6 +4846,106 @@ function bindEvents() {
     updateAutocomplete();
   });
 
+  const imgInputEl = document.getElementById("composer-image-input");
+  document.getElementById("btn-attach-image")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    imgInputEl?.click();
+  });
+  imgInputEl?.addEventListener("change", async () => {
+    const files = Array.from(imgInputEl.files || []);
+    for (const f of files) {
+      await addImageAttachmentFromFile(f);
+    }
+    imgInputEl.value = "";
+  });
+
+  // Ctrl+V paste image into composer (works across chat view unless inside modals/code editor/terminal)
+  document.addEventListener("paste", async (e) => {
+    if (document.body.classList.contains("spectate-readonly")) return;
+    if (!document.getElementById("view-chat")?.classList.contains("active")) return;
+    const tgt = e.target;
+    if (
+      tgt &&
+      tgt.closest &&
+      tgt.closest("#rules-overlay, #settings-overlay, #quick-open-overlay, #view-models, #view-editor, #view-terminal")
+    ) {
+      return;
+    }
+    const cd = e.clipboardData;
+    if (!cd) return;
+    const imgFiles = [];
+    if (cd.items) {
+      for (const item of Array.from(cd.items)) {
+        if (item.kind === "file" && /^image\//i.test(item.type || "")) {
+          const f = item.getAsFile();
+          if (f) imgFiles.push(f);
+        }
+      }
+    }
+    if (!imgFiles.length && cd.files) {
+      for (const f of Array.from(cd.files)) {
+        if (isImageAttachmentFile(f)) imgFiles.push(f);
+      }
+    }
+    if (!imgFiles.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    for (const f of imgFiles) {
+      await addImageAttachmentFromFile(f);
+    }
+    document.getElementById("composer-input")?.focus();
+  });
+
+  // Drag & Drop images directly onto chat stage / composer
+  const viewChatEl = document.getElementById("view-chat");
+  const compShellEl = document.querySelector(".composer-shell-frame");
+  let _chatDragDepth = 0;
+  const _hasFilesDrag = (e) => Array.from(e.dataTransfer?.types || []).includes("Files");
+  const _setDragHighlight = (on) => {
+    viewChatEl?.classList.toggle("drag-over-chat", on);
+    compShellEl?.classList.toggle("drag-over", on);
+  };
+  viewChatEl?.addEventListener("dragenter", (e) => {
+    if (document.body.classList.contains("spectate-readonly") || !_hasFilesDrag(e)) return;
+    e.preventDefault();
+    _chatDragDepth += 1;
+    _setDragHighlight(true);
+  });
+  viewChatEl?.addEventListener("dragover", (e) => {
+    if (document.body.classList.contains("spectate-readonly") || !_hasFilesDrag(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    _setDragHighlight(true);
+  });
+  viewChatEl?.addEventListener("dragleave", (e) => {
+    if (document.body.classList.contains("spectate-readonly")) return;
+    if (_chatDragDepth > 0) _chatDragDepth -= 1;
+    if (_chatDragDepth <= 0) {
+      _chatDragDepth = 0;
+      _setDragHighlight(false);
+    }
+  });
+  viewChatEl?.addEventListener("drop", async (e) => {
+    if (document.body.classList.contains("spectate-readonly")) return;
+    _chatDragDepth = 0;
+    _setDragHighlight(false);
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (!files.length) return;
+    const imgFiles = files.filter((f) => isImageAttachmentFile(f));
+    if (!imgFiles.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    for (const f of imgFiles) {
+      await addImageAttachmentFromFile(f);
+    }
+    document.getElementById("composer-input")?.focus();
+  });
+
+  document.getElementById("btn-close-lightbox")?.addEventListener("click", closeImageLightbox);
+  document.getElementById("img-lightbox-overlay")?.addEventListener("click", (e) => {
+    if (e.target.id === "img-lightbox-overlay") closeImageLightbox();
+  });
+
   document.getElementById("btn-send-prompt")?.addEventListener("click", () => {
     if (state.isGenerating) stopActiveGeneration();
     else sendPrompt();
@@ -5204,6 +5465,11 @@ function bindEvents() {
 
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    const lbOv = document.getElementById("img-lightbox-overlay");
+    if (lbOv && !lbOv.classList.contains("hidden")) {
+      closeImageLightbox();
+      return;
+    }
     const rulesOv = document.getElementById("rules-overlay");
     if (rulesOv && !rulesOv.classList.contains("hidden")) {
       closeRulesModal();
@@ -5353,8 +5619,9 @@ function renderSpectatePayload(data) {
         lastAssistantRendered = "";
         lastAssistantStreaming = false;
         const txt = cleanMessageContent(String(ev.prompt || ev.content || ev.text || ""));
+        const imgs = Array.isArray(ev.images) ? ev.images : [];
         const tStr = formatShortTimestamp(ev.time || ev.timestamp || "");
-        if (txt) appendUserBubble(txt, tStr);
+        if (txt || imgs.length) appendUserBubble(txt, tStr, imgs);
       } else if (ev.kind === "loading") {
         const c = ensureCard();
         const lt = c.el?.querySelector(".cli-loading-text");
@@ -5406,7 +5673,8 @@ function renderSpectatePayload(data) {
         curCard = null;
         if (/^\s*<tool_result\b/i.test(rawContent)) continue;
         const cleanedUser = cleanMessageContent(rawContent);
-        if (cleanedUser) appendUserBubble(cleanedUser);
+        const imgs = Array.isArray(m.images) ? m.images : [];
+        if (cleanedUser || imgs.length) appendUserBubble(cleanedUser, "", imgs);
       } else if (m.role === "assistant") {
         curCard = null;
         const cleanedAssistant = cleanMessageContent(rawContent);
